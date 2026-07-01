@@ -4,9 +4,8 @@ import fs from 'fs';
 import { spawn } from 'child_process';
 
 const app = express();
-const port = process.env.PORT || 3002; // Use 3002 to avoid conflicts
+const port = process.env.PORT || 3002;
 
-// Enable CORS for remote cross-origin access
 app.use(cors());
 app.use(express.json());
 
@@ -25,26 +24,19 @@ if (!modelsPath) {
 
 console.log(`Resolved models config path: ${modelsPath}`);
 
-// Resolve SUT API Key
-let apiKey = process.env.SUT_OPENWEBUI_API_KEY;
-if (!apiKey) {
-  try {
-    if (fs.existsSync(modelsPath)) {
-      const data = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
-      apiKey = data.providers?.['sut-openwebui']?.apiKey;
-      console.log('SUT API Key resolved successfully');
-    }
-  } catch (err) {
-    console.error('Failed to read SUT API key:', err.message);
+// Load all providers dynamically from models.json
+let providersConfig = {};
+try {
+  if (fs.existsSync(modelsPath)) {
+    const data = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
+    providersConfig = data.providers || {};
+    console.log(`Successfully loaded ${Object.keys(providersConfig).length} providers from models.json`);
   }
+} catch (err) {
+  console.error('Failed to parse providers from models.json:', err.message);
 }
 
-if (!apiKey) {
-  apiKey = 'sk-60139017ac794f349449f05cba00afff';
-  console.log('Using default fallback SUT API Key');
-}
-
-// 1. Endpoint to list models
+// 1. Endpoint to list models (dynamically constructed from models.json)
 app.get('/api/models', (req, res) => {
   try {
     if (!fs.existsSync(modelsPath)) {
@@ -72,7 +64,7 @@ app.get('/api/models', (req, res) => {
   }
 });
 
-// 2. Endpoint to process inferences
+// 2. Endpoint to process inferences (dynamically routes based on provider)
 app.post('/api/infer', async (req, res) => {
   try {
     const { model, prompt } = req.body;
@@ -80,13 +72,39 @@ app.post('/api/infer', async (req, res) => {
       return res.status(400).json({ error: 'Missing model or prompt' });
     }
 
-    const cleanModel = model.startsWith('sut-openwebui/') 
-      ? model.replace('sut-openwebui/', '') 
-      : model;
+    // Determine provider ID and model ID
+    const parts = model.split('/');
+    const providerId = parts[0];
+    const cleanModel = parts.slice(1).join('/');
 
-    console.log(`Routing completions for: ${cleanModel}`);
+    console.log(`Routing inference: Provider="${providerId}" Model="${cleanModel}"`);
 
-    const response = await fetch('https://genai.sut.ac.th/api/chat/completions', {
+    // Fetch config for this provider
+    let provider = providersConfig[providerId];
+    
+    // Fallback if provider not explicitly configured but defaults exist
+    if (!provider) {
+      if (providerId === 'sut-openwebui') {
+        provider = {
+          baseUrl: 'https://genai.sut.ac.th/api',
+          apiKey: process.env.SUT_OPENWEBUI_API_KEY || 'sk-60139017ac794f349449f05cba00afff'
+        };
+      } else {
+        return res.status(400).json({ error: `Provider '${providerId}' is not configured in models.json` });
+      }
+    }
+
+    const baseUrl = provider.baseUrl || 'https://genai.sut.ac.th/api';
+    const apiKey = provider.apiKey;
+
+    if (!apiKey) {
+      return res.status(500).json({ error: `API Key missing for provider '${providerId}'` });
+    }
+
+    const targetUrl = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+    console.log(`Forwarding query to: ${targetUrl}`);
+
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -102,7 +120,7 @@ app.post('/api/infer', async (req, res) => {
 
     if (!response.ok) {
       const errBody = await response.text();
-      return res.status(response.status).json({ error: 'SUT API Error', details: errBody });
+      return res.status(response.status).json({ error: `${providerId} API Error`, details: errBody });
     }
 
     const data = await response.json();
@@ -123,27 +141,19 @@ app.post('/api/infer', async (req, res) => {
 // 🛠️ AGENTIC LOCAL COMPUTER & INTERNET TOOLS
 // ==========================================
 
-// A. Web Search (Scrapes DuckDuckGo HTML search page cleanly)
 app.post('/api/tools/web-search', async (req, res) => {
   const { query } = req.body;
   if (!query) return res.status(400).json({ success: false, error: 'Missing query' });
-  
   console.log(`🔍 [Tool: Web Search] Query: "${query}"`);
-  
   try {
     const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
     const html = await response.text();
-    
     const results = [];
-    // DuckDuckGo HTML layout regex search
     const titleRegex = /<a class="result__url" href="([^"]+)">([\s\S]*?)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
     let match;
     let count = 0;
-    
     while ((match = titleRegex.exec(html)) !== null && count < 5) {
       const url = match[1].trim();
       const title = match[2].replace(/<[^>]*>/g, '').trim();
@@ -151,11 +161,9 @@ app.post('/api/tools/web-search', async (req, res) => {
       results.push({ title, url, snippet });
       count++;
     }
-    
     if (results.length === 0) {
       return res.json({ success: true, output: "No search results returned or rate-limited. Try refinement." });
     }
-    
     const output = results.map((r, i) => `Result #${i+1}: ${r.title}\nSource: ${r.url}\nSummary: ${r.snippet}\n`).join('\n');
     res.json({ success: true, output });
   } catch (err) {
@@ -163,40 +171,27 @@ app.post('/api/tools/web-search', async (req, res) => {
   }
 });
 
-// B. Fetch URL (Scrapes a webpage, strips scripts/CSS and returns text)
 app.post('/api/tools/fetch-url', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ success: false, error: 'Missing url' });
-  
   console.log(`🌐 [Tool: Fetch URL] ${url}`);
-  
   try {
     const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     });
     const html = await response.text();
-    
-    let clean = html.replace(/<script[\s\S]*?<\/script>/gi, '')
-                    .replace(/<style[\s\S]*?<\/style>/gi, '');
-    clean = clean.replace(/<[^>]*>/g, ' ')
-                 .replace(/\s+/g, ' ')
-                 .trim();
-                 
-    res.json({ success: true, content: clean.substring(0, 8000) }); // Cap at 8k to fit LLM contexts
+    let clean = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
+    clean = clean.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    res.json({ success: true, content: clean.substring(0, 8000) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// C. Read File from local directory
 app.post('/api/tools/read-file', (req, res) => {
   const { path } = req.body;
   if (!path) return res.status(400).json({ success: false, error: 'Missing path' });
-  
   console.log(`📖 [Tool: Read File] ${path}`);
-  
   try {
     if (!fs.existsSync(path)) {
       return res.status(404).json({ success: false, error: 'File does not exist.' });
@@ -208,15 +203,10 @@ app.post('/api/tools/read-file', (req, res) => {
   }
 });
 
-// D. Write File to local directory
 app.post('/api/tools/write-file', (req, res) => {
   const { path, content } = req.body;
-  if (!path || content === undefined) {
-    return res.status(400).json({ success: false, error: 'Missing path or content' });
-  }
-  
+  if (!path || content === undefined) return res.status(400).json({ success: false, error: 'Missing path or content' });
   console.log(`💾 [Tool: Write File] ${path}`);
-  
   try {
     fs.writeFileSync(path, content, 'utf8');
     res.json({ success: true, output: `File written successfully to ${path}` });
@@ -225,27 +215,21 @@ app.post('/api/tools/write-file', (req, res) => {
   }
 });
 
-// E. Run Command locally in shell
 app.post('/api/tools/run-command', (req, res) => {
   const { command } = req.body;
   if (!command) return res.status(400).json({ success: false, error: 'Missing command' });
-  
   console.log(`💻 [Tool: Run Command] "${command}"`);
-  
   const isWindows = process.platform === 'win32';
   const shell = isWindows ? 'cmd.exe' : '/bin/sh';
   const flag = isWindows ? '/c' : '-c';
-  
   const child = spawn(shell, [flag, command], { shell: false });
   let output = '';
   let errorOutput = '';
-  
   child.stdout.on('data', (data) => output += data.toString());
   child.stderr.on('data', (data) => errorOutput += data.toString());
-  
   child.on('close', (code) => {
     res.json({
-      success: true, // Return true so tool execution counts as successful block
+      success: true,
       code,
       output: (output + '\n' + errorOutput).trim()
     });
@@ -255,6 +239,6 @@ app.post('/api/tools/run-command', (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`==================================================`);
   console.log(`🚀 Standalone Backend API listening at: http://0.0.0.0:${port}`);
-  console.log(`CORS and Agentic computer/network tools fully enabled.`);
+  console.log(`Dynamic Provider Routing (SUT / ManageAI) fully active.`);
   console.log(`==================================================`);
 });
