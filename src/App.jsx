@@ -79,6 +79,7 @@ export default function App() {
   });
   
   const [models, setModels] = useState([]);
+  const [overallModel, setOverallModel] = useState('');
   const [loadingModels, setLoadingModels] = useState(true);
   const [activeTab, setActiveTab] = useState('workspace');
   
@@ -87,6 +88,12 @@ export default function App() {
   const [ceoStep, setCeoStep] = useState(null);
   const [finalResponse, setFinalResponse] = useState('');
   const [error, setError] = useState(null);
+
+  const handleOverallModelChange = (modelKey) => {
+    setOverallModel(modelKey);
+    if (!modelKey) return;
+    setAgents(prev => prev.map(a => ({ ...a, model: modelKey })));
+  };
 
   const [selectedAgentId, setSelectedAgentId] = useState('ceo');
   const [sandboxMessages, setSandboxMessages] = useState([]);
@@ -115,6 +122,7 @@ export default function App() {
         
         if (list.length > 0) {
           const defaultModel = list[0].key;
+          setOverallModel(defaultModel);
           setAgents(prev => prev.map(a => (!a.model || !list.some(m => m.key === a.model)) ? { ...a, model: defaultModel } : a));
         }
       } catch (err) {
@@ -391,8 +399,32 @@ Agent:`;
             </button>
           </div>
 
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-dark)' }}>
-            Configured Models: <span style={{ color: 'var(--text-muted)' }}>{models.length}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-dark)', fontWeight: '600' }}>Overall Model:</label>
+              <select
+                value={overallModel}
+                onChange={(e) => handleOverallModelChange(e.target.value)}
+                style={{
+                  padding: '5px 12px',
+                  fontSize: '0.8rem',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: 'var(--text-light)',
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                <option value="">-- Choose Global Model --</option>
+                {models.map(m => (
+                  <option key={m.key} value={m.key}>{m.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-dark)' }}>
+              Configured Models: <span style={{ color: 'var(--text-muted)' }}>{models.length}</span>
+            </div>
           </div>
         </header>
 
