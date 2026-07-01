@@ -13,5 +13,5 @@ services:
       # - SUT_OPENWEBUI_API_KEY=sk-60139017ac794f349449f05cba00afff
     volumes:
       # Mount the ION Server host's OpenClaw config file dynamically
-      - /home/ion20155/.openclaw/agents/main/agent/models.json:/app/config/models.json:ro
+      - ./models.json:/app/config/models.json:ro
     restart: always
