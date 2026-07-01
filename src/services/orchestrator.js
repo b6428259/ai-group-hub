@@ -364,6 +364,9 @@ You can write explanations or introductions if you want, but you MUST include th
         let agentPrompt = `[SYSTEM]
 ${agent.systemPrompt}
 
+PORT CONFIGURATION CONSTRAINT:
+If you write, modify, configure, or run any web application or web server (e.g. using node, python, http-server, etc.), you MUST NOT use port 3000, 3001, 3002, 5173, 5174, or 8080. Those ports are occupied by Vite, the system API, and the dashboard. Instead, you MUST use a port in the range 8000-8020 (e.g., 8000, 8001, etc.).
+
 You have access to the following local tools to search the internet and interact with your computer:
 
 1. Web Search:

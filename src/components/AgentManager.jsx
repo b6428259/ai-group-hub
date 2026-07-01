@@ -119,6 +119,21 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
     onUpdateAgents(updated);
   };
 
+  const handleCloneAgent = (agent, e) => {
+    e.stopPropagation(); // prevent opening edit modal
+    const existingSameRole = agents.filter(a => a.role === agent.role);
+    const nextNumber = existingSameRole.length + 1;
+    const newAgent = {
+      ...agent,
+      id: `${agent.id}_clone_${Date.now()}`,
+      name: `${agent.name.replace(/\s\d+$/, '')} ${nextNumber}`,
+      active: true,
+      isHired: false
+    };
+    const updated = [...agents, newAgent];
+    onUpdateAgents(updated);
+  };
+
   return (
     <div className="agent-manager-section">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -157,12 +172,40 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
                   {agent.role}
                 </span>
                 {agent.id !== 'ceo' && (
-                  <input 
-                    type="checkbox" 
-                    checked={agent.active} 
-                    onChange={(e) => toggleActive(agent.id, e)}
-                    style={{ width: '14px', height: '14px', cursor: 'pointer' }}
-                  />
+                  <>
+                    <button
+                      title="Clone / Scale Agent"
+                      onClick={(e) => handleCloneAgent(agent, e)}
+                      style={{
+                        padding: '2px 6px',
+                        fontSize: '0.65rem',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '4px',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                        marginRight: '4px',
+                        fontWeight: '600',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = 'var(--primary)';
+                        e.target.style.color = 'white';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = 'rgba(255, 255, 255, 0.05)';
+                        e.target.style.color = 'var(--text-muted)';
+                      }}
+                    >
+                      Clone
+                    </button>
+                    <input 
+                      type="checkbox" 
+                      checked={agent.active} 
+                      onChange={(e) => toggleActive(agent.id, e)}
+                      style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+                    />
+                  </>
                 )}
               </div>
             </div>

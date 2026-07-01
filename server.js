@@ -104,6 +104,8 @@ app.post('/api/infer', async (req, res) => {
     const targetUrl = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
     console.log(`Forwarding query to: ${targetUrl}`);
 
+    const isMaxPlus = (providerId === 'maxplus-ai');
+
     const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
@@ -114,7 +116,8 @@ app.post('/api/infer', async (req, res) => {
         model: cleanModel,
         messages: [
           { role: 'user', content: prompt }
-        ]
+        ],
+        stream: isMaxPlus
       })
     });
 
@@ -123,9 +126,40 @@ app.post('/api/infer', async (req, res) => {
       return res.status(response.status).json({ error: `${providerId} API Error`, details: errBody });
     }
 
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || '';
-    
+    let text = '';
+
+    if (isMaxPlus) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === 'data: [DONE]') continue;
+          if (trimmed.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(trimmed.slice(6));
+              const content = json.choices?.[0]?.delta?.content || '';
+              text += content;
+            } catch (e) {
+              // chunk parse error
+            }
+          }
+        }
+      }
+    } else {
+      const data = await response.json();
+      text = data.choices?.[0]?.message?.content || '';
+    }
+
     res.json({
       ok: true,
       capability: 'model.run',
@@ -193,10 +227,18 @@ app.post('/api/tools/read-file', (req, res) => {
   if (!path) return res.status(400).json({ success: false, error: 'Missing path' });
   console.log(`📖 [Tool: Read File] ${path}`);
   try {
-    if (!fs.existsSync(path)) {
+    let targetPath = path;
+    const baseName = path.split(/[/\\]/).pop();
+    if (baseName === 'index.html' || baseName === 'index.css') {
+      if (fs.existsSync(`sandbox/${baseName}`)) {
+        targetPath = `sandbox/${baseName}`;
+        console.log(`⚠️ Redirected read to: ${targetPath}`);
+      }
+    }
+    if (!fs.existsSync(targetPath)) {
       return res.status(404).json({ success: false, error: 'File does not exist.' });
     }
-    const content = fs.readFileSync(path, 'utf8');
+    const content = fs.readFileSync(targetPath, 'utf8');
     res.json({ success: true, content });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -208,8 +250,17 @@ app.post('/api/tools/write-file', (req, res) => {
   if (!path || content === undefined) return res.status(400).json({ success: false, error: 'Missing path or content' });
   console.log(`💾 [Tool: Write File] ${path}`);
   try {
-    fs.writeFileSync(path, content, 'utf8');
-    res.json({ success: true, output: `File written successfully to ${path}` });
+    let targetPath = path;
+    const baseName = path.split(/[/\\]/).pop();
+    if (baseName === 'index.html' || baseName === 'index.css' || baseName === 'server.js' || baseName === 'package.json' || baseName === 'vite.config.js') {
+      if (!fs.existsSync('sandbox')) {
+        fs.mkdirSync('sandbox');
+      }
+      targetPath = `sandbox/${baseName}`;
+      console.log(`⚠️ Redirected write to: ${targetPath}`);
+    }
+    fs.writeFileSync(targetPath, content, 'utf8');
+    res.json({ success: true, output: `File written successfully to ${targetPath}` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
