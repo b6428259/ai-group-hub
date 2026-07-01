@@ -1,0 +1,426 @@
+import { runInference } from './api';
+
+// Helper to map AI role text to existing agent IDs
+function mapAgentId(text, activeAgents) {
+  if (!text) return 'coder';
+  const clean = text.toLowerCase();
+  
+  // Try direct match by ID or Name or Role
+  const match = activeAgents.find(a => 
+    a.id.toLowerCase() === clean || 
+    a.name.toLowerCase().includes(clean) || 
+    a.role.toLowerCase().includes(clean) || 
+    clean.includes(a.role.toLowerCase())
+  );
+  
+  if (match) return match.id;
+  
+  // Common keyword mapping fallbacks
+  if (clean.includes('code') || clean.includes('dev') || clean.includes('program') || clean.includes('software') || clean.includes('eng')) {
+    return activeAgents.find(a => a.role.toLowerCase() === 'coder')?.id || 'coder';
+  }
+  if (clean.includes('write') || clean.includes('content') || clean.includes('copy') || clean.includes('author') || clean.includes('research') || clean.includes('culinary')) {
+    return activeAgents.find(a => a.role.toLowerCase() === 'writer')?.id || 'writer';
+  }
+  if (clean.includes('qa') || clean.includes('review') || clean.includes('edit') || clean.includes('test') || clean.includes('editor')) {
+    return activeAgents.find(a => a.role.toLowerCase() === 'reviewer')?.id || 'reviewer';
+  }
+  if (clean.includes('pm') || clean.includes('manager') || clean.includes('lead') || clean.includes('director') || clean.includes('product')) {
+    return activeAgents.find(a => a.role.toLowerCase() === 'pm')?.id || 'pm';
+  }
+  if (clean.includes('cto') || clean.includes('architect') || clean.includes('tech chief')) {
+    return activeAgents.find(a => a.role.toLowerCase() === 'cto')?.id || 'cto';
+  }
+  if (clean.includes('sec') || clean.includes('board') || clean.includes('assistant')) {
+    return activeAgents.find(a => a.role.toLowerCase() === 'secretary')?.id || 'secretary';
+  }
+  if (clean.includes('ceo') || clean.includes('executive')) {
+    return 'ceo';
+  }
+  
+  return activeAgents[1]?.id || 'coder'; // default fallback
+}
+
+/**
+ * Orchestrator service using 3-tier parsing (JSON -> XML -> Markdown) for ultimate compatibility.
+ * Executes independent tasks in PARALLEL using a Directed Acyclic Graph (DAG) scheduler.
+ */
+export async function runOrchestration({
+  mainTask,
+  ceoModel,
+  agents,
+  onStepStart,
+  onStepOutput,
+  onStepComplete,
+  onStepError,
+  onCEOPlanCreated,
+  onFinalResponse,
+  onAgentHired,
+  existingSteps, // Optional: list of steps from a previous run to resume
+}) {
+  const activeAgents = agents.filter(a => a.active);
+  const agentsListText = activeAgents
+    .map(a => `- ID: "${a.id}", Name: "${a.name}", Role: "${a.role}" (Expertise: ${a.systemPrompt.slice(0, 120)}...)`)
+    .join('\n');
+
+  let processedSteps = [];
+  const hiredAgentsMap = {};
+  const results = {};
+
+  if (existingSteps && existingSteps.length > 0) {
+    // --- RESUME MODE ---
+    processedSteps = [...existingSteps];
+    
+    // Pre-populate results with already completed steps
+    processedSteps.forEach(s => {
+      if (s.status === 'completed' && s.output) {
+        results[s.stepNumber] = s.output;
+      }
+    });
+
+    onStepStart(-1, 'ceo', 'CEO', `Resuming roadmap with ${processedSteps.length} steps. Skipping completed ones...`);
+    // Briefly sleep to show transition status
+    await new Promise(r => setTimeout(r, 1200));
+
+  } else {
+    // --- NEW RUN MODE ---
+    onStepStart(-1, 'ceo', 'CEO', 'Analyzing task, hiring agents, and planning execution...');
+    
+    const ceoPlanPrompt = `Create a step-by-step task execution plan for a team of specialized AI agents representing a corporate enterprise to solve: "${mainTask}"
+
+Corporate Agent Directory:
+${agentsListText}
+
+Workflow Hierarchy Guidelines:
+1. PHASE 1: MEETING & ALIGNMENT (Assigned to: Secretary) - The Secretary gathers initial directives and outlines the project brief.
+2. PHASE 2: GOALS & ROADMAP (Assigned to: CEO) - The CEO sets the high-level objectives and targets.
+3. PHASE 3: TECHNICAL ARCHITECTURE (Assigned to: CTO) - The CTO defines technical system designs and database/file structures.
+4. PHASE 4: EXECUTION & TASK PM (Assigned to: PM) - The Product Manager breaks down technical designs into specific tasks for subordinates.
+5. PHASE 5: WORK EXECUTION (Assigned to: Developer / Copywriter / etc.) - The specialists write the code, write the documents, and implement.
+6. PHASE 6: QUALITY INSPECTION (Assigned to: QA Reviewer) - Inspects deliverables for code errors, recipes, and text quality.
+7. PHASE 7: MINUTES & WRAP-UP (Assigned to: Secretary) - Compiles all outputs into a corporate report.
+8. PHASE 8: FINAL CEO SIGN-OFF (Assigned to: CEO) - CEO signs off and delivers the final package.
+
+If no existing agent fits a specific execution role (e.g. you need a specialized database DBA or chef), you can hire a new specialized agent by setting "newAgentSpec".
+To save tokens, specify which step numbers this step depends on in the depends_on tag (comma-separated).
+
+You MUST wrap the planning details of each step in the following XML tags:
+<step>
+  <number>1</number>
+  <title>Short Step Title</title>
+  <description>Detailed instructions for what the agent should do.</description>
+  <assigned_agent>existing_agent_id OR a temporary new agent ID</assigned_agent>
+  <depends_on></depends_on> <!-- step numbers this step depends on, comma separated. e.g. 1 or 1,2. Leave empty if none -->
+  
+  <!-- Include new_agent ONLY if assigned_agent is a new temporary ID -->
+  <new_agent>
+    <name>Full name of the new agent</name>
+    <role>Single-word role badge (e.g. Developer, Chef, Security)</role>
+    <system_prompt>Instructions defining how this hired agent should behave.</system_prompt>
+  </new_agent>
+</step>
+
+You can write explanations or introductions if you want, but you MUST include the <step> tags for each step.`;
+
+    let planText = await runInference(ceoModel, ceoPlanPrompt);
+    let steps = [];
+    
+    // --- TIER 1: JSON Parsing ---
+    try {
+      const cleaned = planText.replace(/```json|```/g, '').trim();
+      const start = cleaned.indexOf('[');
+      const end = cleaned.lastIndexOf(']');
+      if (start !== -1 && end !== -1) {
+        const parsed = JSON.parse(cleaned.substring(start, end + 1));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          steps = parsed.map((s, index) => ({
+            stepNumber: s.stepNumber || s.step || (index + 1),
+            title: s.title || s.task || `Step ${index + 1}`,
+            description: s.description || s.details?.description || 'No description provided.',
+            assignedAgentId: mapAgentId(s.assignedAgentId || s.assignedAgent, activeAgents),
+            dependsOnSteps: s.dependsOnSteps || s.depends || [],
+            newAgentSpec: s.newAgentSpec || null
+          }));
+        }
+      }
+    } catch (e) {
+      // ignore JSON failure
+    }
+
+    // --- TIER 2: XML Parsing ---
+    if (steps.length === 0) {
+      const stepMatches = planText.match(/<step>[\s\S]*?<\/step>/g);
+      if (stepMatches && stepMatches.length > 0) {
+        steps = stepMatches.map((stepXml, index) => {
+          const getTag = (tag) => {
+            const regex = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`);
+            const match = stepXml.match(regex);
+            return match ? match[1].trim() : '';
+          };
+
+          const stepNumber = parseInt(getTag('number')) || (index + 1);
+          const title = getTag('title') || `Step ${stepNumber}`;
+          const description = getTag('description') || 'No description provided.';
+          const assignedAgentId = mapAgentId(getTag('assigned_agent'), activeAgents);
+          const dependsStr = getTag('depends_on');
+          const dependsOnSteps = dependsStr ? dependsStr.split(',').map(s => parseInt(s.trim())).filter(Number) : [];
+          
+          let newAgentSpec = null;
+          const newAgentXml = getTag('new_agent');
+          if (newAgentXml) {
+            const name = (newAgentXml.match(/<name>([\s\S]*?)<\/name>/) || ['',''])[1].trim();
+            const role = (newAgentXml.match(/<role>([\s\S]*?)<\/role>/) || ['',''])[1].trim();
+            const prompt = (newAgentXml.match(/<system_prompt>([\s\S]*?)<\/system_prompt>/) || ['',''])[1].trim();
+            if (name && role && prompt) {
+              newAgentSpec = { name, role, systemPrompt: prompt };
+            }
+          }
+
+          return { stepNumber, title, description, assignedAgentId, dependsOnSteps, newAgentSpec };
+        });
+      }
+    }
+
+    // --- TIER 3: Fallback Markdown parsing ---
+    if (steps.length === 0) {
+      const stepBlocks = planText.split(/(?=###?\s*(?:Step|Agent|Phase|\*\*Step|\*\*Agent)\s*\d+|####?\s*(?:Step|Agent)\s*\d+)/gi);
+      
+      let currentStepNum = 1;
+      for (const block of stepBlocks) {
+        const hasStepNumber = block.match(/(?:Step|Agent|Phase)\s*(\d+)/i);
+        if (!hasStepNumber) continue;
+
+        const stepNumber = parseInt(hasStepNumber[1]) || currentStepNum;
+        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length === 0) continue;
+        
+        const titleLine = lines[0].replace(/^#+\s*/, '').replace(/^\*+\s*/, '').trim();
+        const title = titleLine || `Step ${stepNumber}`;
+
+        let assignedAgentId = 'coder';
+        let newAgentSpec = null;
+        let foundAgentText = '';
+        
+        for (const line of lines) {
+          const agentMatch = line.match(/(?:agent|assigned|role|responsible)\s*:\s*\*?`?([^`*\n]+)/i);
+          if (agentMatch) {
+            foundAgentText = agentMatch[1].trim();
+            break;
+          }
+        }
+        
+        if (foundAgentText) {
+          assignedAgentId = mapAgentId(foundAgentText, activeAgents);
+          const isExisting = activeAgents.some(a => 
+            a.id.toLowerCase() === foundAgentText.toLowerCase() || 
+            a.role.toLowerCase() === foundAgentText.toLowerCase()
+          );
+          
+          if (!isExisting && foundAgentText.toLowerCase() !== 'pm' && foundAgentText.toLowerCase() !== 'ceo' && foundAgentText.toLowerCase() !== 'cto' && foundAgentText.toLowerCase() !== 'secretary') {
+            newAgentSpec = {
+              name: `${foundAgentText} Agent`,
+              role: foundAgentText.replace(/[^a-zA-Z]/g, ''),
+              systemPrompt: `You are a specialized ${foundAgentText}. Provide expert output for: ${title}.`
+            };
+            assignedAgentId = `new_agent_${stepNumber}`;
+          }
+        }
+
+        const descriptionLines = lines.slice(1).filter(line => {
+          const isMeta = line.match(/(?:agent|assigned|role|dependencies|dependency|output|deliverable)\s*:/i);
+          const isHeading = line.startsWith('#');
+          return !isMeta && !isHeading;
+        });
+        const description = descriptionLines.join('\n') || `Perform task: ${title}`;
+
+        let dependsOnSteps = [];
+        for (const line of lines) {
+          const depMatch = line.match(/(?:dependencies|dependency|depends on|depends)\s*:\s*([^\n]+)/i);
+          if (depMatch) {
+            const numbers = depMatch[1].match(/\d+/g);
+            if (numbers) {
+              dependsOnSteps = numbers.map(Number);
+            }
+            break;
+          }
+        }
+
+        steps.push({
+          stepNumber,
+          title,
+          description,
+          assignedAgentId,
+          dependsOnSteps,
+          newAgentSpec
+        });
+        currentStepNum = stepNumber + 1;
+      }
+    }
+
+    if (steps.length === 0) {
+      steps = [
+        {
+          stepNumber: 1,
+          title: "Work Execution",
+          description: `Execute the task: ${mainTask}`,
+          assignedAgentId: activeAgents[1]?.id || 'coder',
+          dependsOnSteps: []
+        },
+        {
+          stepNumber: 2,
+          title: "Review & Quality Control",
+          description: `Review the execution of: ${mainTask}`,
+          assignedAgentId: activeAgents[3]?.id || 'reviewer',
+          dependsOnSteps: [1]
+        }
+      ];
+    }
+
+    // Pre-process steps to handle dynamic agent specs
+    for (const step of steps) {
+      const processedStep = { ...step };
+      
+      if (step.newAgentSpec) {
+        const tempId = step.assignedAgentId;
+        const newId = `hired_${step.newAgentSpec.role.toLowerCase()}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        
+        const newAgent = {
+          id: newId,
+          name: step.newAgentSpec.name,
+          role: step.newAgentSpec.role,
+          systemPrompt: step.newAgentSpec.systemPrompt,
+          model: ceoModel,
+          temperature: 0.5,
+          active: true,
+          isHired: true
+        };
+        
+        hiredAgentsMap[tempId] = newAgent;
+        processedStep.assignedAgentId = newId;
+        
+        if (onAgentHired) {
+          onAgentHired(newAgent);
+        }
+      }
+      processedSteps.push(processedStep);
+    }
+    
+    onCEOPlanCreated(processedSteps);
+    onStepComplete(-1, `CEO created plan with ${processedSteps.length} steps.`);
+  }
+
+  // --- 3. Parallel Execution Stage (DAG Engine) ---
+  const activePromises = {};
+  
+  // Helper to determine if a step is ready to execute (all dependencies completed)
+  const canStartStep = (step) => {
+    if (step.status === 'completed') return false; // Already finished
+    if (activePromises[step.stepNumber]) return false; // Currently executing
+    
+    const dependencies = step.dependsOnSteps || [];
+    return dependencies.every(depNum => results[depNum] !== undefined);
+  };
+
+  while (true) {
+    const runnableSteps = processedSteps.filter(canStartStep);
+    const runningCount = Object.keys(activePromises).length;
+
+    if (runnableSteps.length === 0) {
+      if (runningCount === 0) {
+        // No runnable steps left and no tasks running: execution finished successfully
+        break;
+      }
+      // Wait for the next running task to complete before scanning for newly unlocked dependencies
+      await Promise.race(Object.values(activePromises));
+      continue;
+    }
+
+    // Start all ready tasks in parallel
+    runnableSteps.forEach(step => {
+      const stepPromise = (async () => {
+        const stepIdx = processedSteps.findIndex(s => s.stepNumber === step.stepNumber);
+        const agent = activeAgents.find(a => a.id === step.assignedAgentId) || 
+                      Object.values(hiredAgentsMap).find(a => a.id === step.assignedAgentId) ||
+                      activeAgents[0];
+                      
+        onStepStart(stepIdx, agent.id, agent.name, `Running Step ${step.stepNumber}: ${step.title}...`);
+        
+        const dependencyStepNumbers = step.dependsOnSteps || [];
+        const previousOutputsCombined = dependencyStepNumbers
+          .map(stepNum => {
+            const prevStep = processedSteps.find(s => s.stepNumber === stepNum);
+            const outputVal = results[stepNum];
+            if (prevStep && outputVal) {
+              const agName = activeAgents.find(ag => ag.id === prevStep.assignedAgentId)?.name || 
+                             Object.values(hiredAgentsMap).find(ag => ag.id === prevStep.assignedAgentId)?.name || 
+                             'Agent';
+              return `### Output from Step ${stepNum} [${agName}]:\n${outputVal}\n`;
+            }
+            return '';
+          })
+          .filter(Boolean)
+          .join('\n');
+          
+        const agentPrompt = `[SYSTEM]
+${agent.systemPrompt}
+
+[USER]
+Main Goal: ${mainTask}
+
+${previousOutputsCombined ? `Relevant previous steps outputs for context:\n${previousOutputsCombined}` : 'No previous step context needed for this task.'}
+
+Your specific task for this step:
+${step.description}
+
+Provide your complete output below. Do not repeat the system prompt.`;
+
+        try {
+          const stepOutput = await runInference(agent.model || ceoModel, agentPrompt);
+          results[step.stepNumber] = stepOutput;
+          onStepComplete(stepIdx, stepOutput);
+        } catch (err) {
+          onStepError(stepIdx, err.message);
+          throw err; // Re-throw to stop the loop on error
+        } finally {
+          delete activePromises[step.stepNumber]; // Clean up active tracker
+        }
+      })();
+
+      activePromises[step.stepNumber] = stepPromise;
+    });
+
+    // Tick the loop when the first promise resolves
+    await Promise.race(Object.values(activePromises));
+  }
+
+  // --- 4. CEO Synthesis Stage ---
+  onStepStart(processedSteps.length, 'ceo', 'CEO', 'Consolidating outputs and generating final response...');
+  
+  const executionLogs = processedSteps.map(step => {
+    const agent = activeAgents.find(a => a.id === step.assignedAgentId) || 
+                  Object.values(hiredAgentsMap).find(a => a.id === step.assignedAgentId) ||
+                  activeAgents[0];
+    return {
+      stepNumber: step.stepNumber,
+      agentName: agent.name,
+      output: results[step.stepNumber] || step.output || ''
+    };
+  });
+
+  const synthesisOutputsText = executionLogs
+    .map(log => `### Step ${log.stepNumber} by [${log.agentName}]:\n${log.output}\n`)
+    .join('\n');
+      
+  const synthesisPrompt = `You are the CEO of the AI Group. The team has completed all sub-tasks for the user's request.
+
+User request: "${mainTask}"
+
+Here are the individual outputs of each agent:
+${synthesisOutputsText}
+
+Consolidate these outputs and write a comprehensive, professional final response for the user. Output it in beautiful Markdown.`;
+
+  const finalResponse = await runInference(ceoModel, synthesisPrompt);
+  onStepComplete(processedSteps.length, finalResponse);
+  onFinalResponse(finalResponse);
+}
