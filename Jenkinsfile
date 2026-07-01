@@ -42,7 +42,7 @@ pipeline {
             --restart always \
             -e PORT=3000 \
             -e OPENCLAW_MODELS_PATH=/app/config/models.json \
-            -v ${WORKSPACE_HOST_PATH}/models.json:/app/config/models.json:ro \
+            -v /home/ion20155/models.json:/app/config/models.json:ro \
             -p ${APP_PORT}:3000 \
             ${IMAGE_NAME}:latest
         '''
