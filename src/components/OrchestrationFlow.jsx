@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import SwarmHQ from './SwarmHQ';
 
 // A lightweight, safe regex-based markdown formatter for premium text presentation
 function MarkdownRenderer({ text }) {
@@ -341,87 +342,8 @@ export default function OrchestrationFlow({
             </div>
           )}
 
-          {/* Swarm HQ Office Layout with walking characters */}
-          {isRunning && (
-            <div className="swarm-hq fade-in">
-              <div className="hq-floor-details" />
-              <div className="hq-grid">
-                <div className="hq-department" style={{ gridColumn: 1, gridRow: 1 }}>
-                  <span className="hq-department-title">Executive Suite</span>
-                </div>
-                <div className="hq-collab-zone" />
-                <div className="hq-department" style={{ gridColumn: 3, gridRow: 1 }}>
-                  <span className="hq-department-title">Tech Lab</span>
-                </div>
-                <div className="hq-department" style={{ gridColumn: 1, gridRow: 2 }}>
-                  <span className="hq-department-title">Dev Workspace</span>
-                </div>
-                <div className="hq-department" style={{ gridColumn: 3, gridRow: 2 }}>
-                  <span className="hq-department-title">Copywriting Hub</span>
-                </div>
-              </div>
-
-              {/* Characters container */}
-              <div className="hq-character-container">
-                {agents.filter(a => a.active).map(agent => {
-                  const activeAgentId = runningStep ? runningStep.assignedAgentId : (ceoStep?.status === 'running' ? 'ceo' : null);
-                  const isActive = activeAgentId === agent.id;
-                  
-                  // Map roles to emojis
-                  let emoji = '👤';
-                  if (agent.role === 'Secretary') emoji = '👩‍💼';
-                  else if (agent.role === 'CEO') emoji = '👑';
-                  else if (agent.role === 'CTO') emoji = '💻';
-                  else if (agent.role === 'PM') emoji = '📋';
-                  else if (agent.role === 'Coder') emoji = '🛠️';
-                  else if (agent.role === 'Writer') emoji = '📝';
-                  else if (agent.role === 'Reviewer') emoji = '🔍';
-                  
-                  // Calculate dynamic position
-                  const sameRoleAgents = agents.filter(a => a.active && a.role === agent.role);
-                  const idx = sameRoleAgents.findIndex(a => a.id === agent.id);
-                  const offset = idx >= 0 ? idx * 45 : 0;
-                  
-                  let pos = { left: '0%', top: '0%' };
-                  if (isActive) {
-                    pos = { left: '48%', top: '42%' };
-                  } else {
-                    switch (agent.role) {
-                      case 'Secretary': pos = { left: `calc(10% + ${offset}px)`, top: '22%' }; break;
-                      case 'CEO': pos = { left: `calc(20% + ${offset}px)`, top: '22%' }; break;
-                      case 'CTO': pos = { left: `calc(75% + ${offset}px)`, top: '22%' }; break;
-                      case 'PM': pos = { left: `calc(43% + ${offset}px)`, top: '15%' }; break;
-                      case 'Coder': pos = { left: `calc(10% + ${offset}px)`, top: '68%' }; break;
-                      case 'Reviewer': pos = { left: `calc(43% + ${offset}px)`, top: '74%' }; break;
-                      case 'Writer': pos = { left: `calc(75% + ${offset}px)`, top: '68%' }; break;
-                      default: pos = { left: `calc(45% + ${offset}px)`, top: '40%' }; break;
-                    }
-                  }
-
-                  return (
-                    <div 
-                      key={agent.id} 
-                      className={`hq-character ${isActive ? 'active walking' : ''}`}
-                      style={{
-                        left: pos.left,
-                        top: pos.top,
-                      }}
-                    >
-                      {isActive && (
-                        <div className="hq-speech-bubble">
-                          {runningStep ? runningStep.title : 'Planning roadmap...'}
-                        </div>
-                      )}
-                      <div className="hq-avatar-circle">
-                        {emoji}
-                      </div>
-                      <span className="hq-character-name">{agent.name}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          {/* Premium Animated Virtual Office */}
+          <SwarmHQ agents={agents} steps={steps} ceoStep={ceoStep} isRunning={isRunning} />
 
           {/* Project Deliverables Download center */}
           {deliverables.length > 0 && (

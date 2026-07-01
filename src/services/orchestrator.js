@@ -314,8 +314,9 @@ You can write explanations or introductions if you want, but you MUST include th
   
   // Helper to determine if a step is ready to execute (all dependencies completed)
   const canStartStep = (step) => {
-    if (step.status === 'completed') return false; // Already finished
-    if (activePromises[step.stepNumber]) return false; // Currently executing
+    if (step.status === 'completed' || step.status === 'error') return false; // Already finished or failed
+    if (step.status === 'running') return false; // Currently executing
+    if (activePromises[step.stepNumber]) return false; // Promise still active
     
     const dependencies = step.dependsOnSteps || [];
     return dependencies.every(depNum => results[depNum] !== undefined);
@@ -331,12 +332,20 @@ You can write explanations or introductions if you want, but you MUST include th
         break;
       }
       // Wait for the next running task to complete before scanning for newly unlocked dependencies
-      await Promise.race(Object.values(activePromises));
+      try {
+        await Promise.race(Object.values(activePromises));
+      } catch (e) {
+        // One step errored — continue loop so other parallel steps can finish
+        console.warn('⚠️ A step errored during parallel execution:', e.message);
+      }
       continue;
     }
 
     // Start all ready tasks in parallel
     runnableSteps.forEach(step => {
+      // Mark as running LOCALLY so canStartStep won't pick it up again
+      step.status = 'running';
+
       const stepPromise = (async () => {
         const stepIdx = processedSteps.findIndex(s => s.stepNumber === step.stepNumber);
         const agent = activeAgents.find(a => a.id === step.assignedAgentId) || 
@@ -346,6 +355,7 @@ You can write explanations or introductions if you want, but you MUST include th
         onStepStart(stepIdx, agent.id, agent.name, `Running Step ${step.stepNumber}: ${step.title}...`);
         
         const dependencyStepNumbers = step.dependsOnSteps || [];
+        const MAX_DEP_OUTPUT = 2000;
         const previousOutputsCombined = dependencyStepNumbers
           .map(stepNum => {
             const prevStep = processedSteps.find(s => s.stepNumber === stepNum);
@@ -354,15 +364,35 @@ You can write explanations or introductions if you want, but you MUST include th
               const agName = activeAgents.find(ag => ag.id === prevStep.assignedAgentId)?.name || 
                              Object.values(hiredAgentsMap).find(ag => ag.id === prevStep.assignedAgentId)?.name || 
                              'Agent';
-              return `### Output from Step ${stepNum} [${agName}]:\n${outputVal}\n`;
+              const truncated = outputVal.length > MAX_DEP_OUTPUT
+                ? outputVal.slice(0, MAX_DEP_OUTPUT) + '\n[...TRUNCATED]'
+                : outputVal;
+              return `### Output from Step ${stepNum} [${agName}]:\n${truncated}\n`;
             }
             return '';
           })
           .filter(Boolean)
           .join('\n');
-          
+
+        // Build execution status context so agent knows project state
+        const statusLines = processedSteps.map(s => {
+          const sAgent = activeAgents.find(a => a.id === s.assignedAgentId) ||
+                         Object.values(hiredAgentsMap).find(a => a.id === s.assignedAgentId);
+          const name = sAgent?.name || 'Agent';
+          if (s.status === 'completed') return `  ✅ Step ${s.stepNumber}: ${s.title} [${name}] — COMPLETED`;
+          if (s.status === 'running') return `  🔄 Step ${s.stepNumber}: ${s.title} [${name}] — RUNNING`;
+          if (s.status === 'error') return `  ❌ Step ${s.stepNumber}: ${s.title} [${name}] — FAILED`;
+          return `  📋 Step ${s.stepNumber}: ${s.title} [${name}] — PENDING`;
+        }).join('\n');
+
         let agentPrompt = `[SYSTEM]
 ${agent.systemPrompt}
+
+TOKEN EFFICIENCY RULES:
+- Be concise. Do NOT repeat or paraphrase the instructions back.
+- Do NOT explain what you are about to do. Just do it.
+- Output ONLY your deliverable (code, text, analysis). No filler.
+- This step is STEP ${step.stepNumber} of ${processedSteps.length}.
 
 PORT CONFIGURATION CONSTRAINT:
 If you write, modify, configure, or run any web application or web server (e.g. using node, python, http-server, etc.), you MUST NOT use port 3000, 3001, 3002, 5173, 5174, or 8080. Those ports are occupied by Vite, the system API, and the dashboard. Instead, you MUST use a port in the range 8000-8020 (e.g., 8000, 8001, etc.).
@@ -412,12 +442,15 @@ You have access to the following local tools to search the internet and interact
 
 To use a tool, output a single <tool_call> XML block in your response. Do not output anything else if you are using a tool. Once the tool executes, you will receive the result and can output more tool calls or your final response.
 
+[EXECUTION STATUS]
+${statusLines}
+
 [USER]
 Main Goal: ${mainTask}
 
 ${previousOutputsCombined ? `Relevant previous steps outputs for context:\n${previousOutputsCombined}` : 'No previous step context needed for this task.'}
 
-Your specific task for this step:
+Your specific task for this step (Step ${step.stepNumber}):
 ${step.description}
 
 Provide your response. Use a tool if you need to access files, run commands, or search the web.`;
@@ -484,11 +517,15 @@ ${toolResult}
 Analyze the result and continue your work. Output another <tool_call> if you need it, or write your final response.`;
           }
           
+          // ✅ Mark step as COMPLETED locally so DAG never re-fires it
+          step.status = 'completed';
           results[step.stepNumber] = stepOutput;
           onStepComplete(stepIdx, stepOutput);
         } catch (err) {
+          // ❌ Mark step as ERROR locally so DAG skips it
+          step.status = 'error';
           onStepError(stepIdx, err.message);
-          throw err;
+          // Do NOT re-throw — let other parallel steps continue
         } finally {
           delete activePromises[step.stepNumber];
         }
@@ -497,13 +534,15 @@ Analyze the result and continue your work. Output another <tool_call> if you nee
       activePromises[step.stepNumber] = stepPromise;
     });
 
-    // Tick the loop when the first promise resolves
-    await Promise.race(Object.values(activePromises));
+    // Tick the loop when the first promise resolves (or rejects)
+    try {
+      await Promise.race(Object.values(activePromises));
+    } catch (e) {
+      // Handled inside each step — continue scanning
+    }
   }
 
   // --- 4. CEO Synthesis Stage ---
-  onStepStart(processedSteps.length, 'ceo', 'CEO', 'Consolidating outputs and generating final response...');
-  
   const executionLogs = processedSteps.map(step => {
     const agent = activeAgents.find(a => a.id === step.assignedAgentId) || 
                   Object.values(hiredAgentsMap).find(a => a.id === step.assignedAgentId) ||
@@ -515,8 +554,26 @@ Analyze the result and continue your work. Output another <tool_call> if you nee
     };
   });
 
+  // Early-exit: skip expensive CEO synthesis if only 1-2 meaningful outputs
+  const meaningfulLogs = executionLogs.filter(l => l.output && l.output.trim().length > 20);
+  if (meaningfulLogs.length <= 1) {
+    const singleOutput = meaningfulLogs[0]?.output || executionLogs[executionLogs.length - 1]?.output || 'Task completed.';
+    onStepComplete(processedSteps.length, singleOutput);
+    onFinalResponse(singleOutput);
+    return;
+  }
+
+  onStepStart(processedSteps.length, 'ceo', 'CEO', 'Consolidating outputs and generating final response...');
+
+  // Truncate each log output for synthesis to save tokens
+  const SYNTH_MAX = 1500;
   const synthesisOutputsText = executionLogs
-    .map(log => `### Step ${log.stepNumber} by [${log.agentName}]:\n${log.output}\n`)
+    .map(log => {
+      const truncOut = log.output.length > SYNTH_MAX
+        ? log.output.slice(0, SYNTH_MAX) + '\n[...TRUNCATED]'
+        : log.output;
+      return `### Step ${log.stepNumber} by [${log.agentName}]:\n${truncOut}\n`;
+    })
     .join('\n');
       
   const synthesisPrompt = `You are the CEO of the AI Group. The team has completed all sub-tasks for the user's request.
@@ -526,7 +583,7 @@ User request: "${mainTask}"
 Here are the individual outputs of each agent:
 ${synthesisOutputsText}
 
-Consolidate these outputs and write a comprehensive, professional final response for the user. Output it in beautiful Markdown.`;
+Consolidate these outputs into a concise, professional final response. Be brief. Output in Markdown.`;
 
   const finalResponse = await runInference(ceoModel, synthesisPrompt);
   onStepComplete(processedSteps.length, finalResponse);
