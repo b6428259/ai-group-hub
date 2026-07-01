@@ -361,8 +361,53 @@ You can write explanations or introductions if you want, but you MUST include th
           .filter(Boolean)
           .join('\n');
           
-        const agentPrompt = `[SYSTEM]
+        let agentPrompt = `[SYSTEM]
 ${agent.systemPrompt}
+
+You have access to the following local tools to search the internet and interact with your computer:
+
+1. Web Search:
+<tool_call>
+  <name>web_search</name>
+  <arguments>
+    <query>search query text</query>
+  </arguments>
+</tool_call>
+
+2. Fetch URL:
+<tool_call>
+  <name>fetch_url</name>
+  <arguments>
+    <url>https://example.com</url>
+  </arguments>
+</tool_call>
+
+3. Read File:
+<tool_call>
+  <name>read_file</name>
+  <arguments>
+    <path>filename.ext</path>
+  </arguments>
+</tool_call>
+
+4. Write File:
+<tool_call>
+  <name>write_file</name>
+  <arguments>
+    <path>filename.ext</path>
+    <content>file contents go here</content>
+  </arguments>
+</tool_call>
+
+5. Run Command:
+<tool_call>
+  <name>run_command</name>
+  <arguments>
+    <command>command to execute in local shell</command>
+  </arguments>
+</tool_call>
+
+To use a tool, output a single <tool_call> XML block in your response. Do not output anything else if you are using a tool. Once the tool executes, you will receive the result and can output more tool calls or your final response.
 
 [USER]
 Main Goal: ${mainTask}
@@ -372,17 +417,77 @@ ${previousOutputsCombined ? `Relevant previous steps outputs for context:\n${pre
 Your specific task for this step:
 ${step.description}
 
-Provide your complete output below. Do not repeat the system prompt.`;
+Provide your response. Use a tool if you need to access files, run commands, or search the web.`;
 
         try {
-          const stepOutput = await runInference(agent.model || ceoModel, agentPrompt);
+          const API_BASE = import.meta.env.VITE_API_URL || '';
+          let stepOutput = '';
+          const maxTurns = 5;
+          
+          for (let turn = 0; turn < maxTurns; turn++) {
+            stepOutput = await runInference(agent.model || ceoModel, agentPrompt);
+            
+            // Check if agent wants to execute a tool
+            const toolMatch = stepOutput.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
+            if (!toolMatch) {
+              break; // No tool call, final output ready!
+            }
+            
+            const toolXml = toolMatch[1];
+            const toolName = (toolXml.match(/<name>([\s\S]*?)<\/name>/) || ['',''])[1].trim();
+            const argsXml = (toolXml.match(/<arguments>([\s\S]*?)<\/arguments>/) || ['',''])[1].trim();
+            
+            let toolArgs = {};
+            if (toolName === 'web_search') {
+              toolArgs = { query: (argsXml.match(/<query>([\s\S]*?)<\/query>/) || ['',''])[1].trim() };
+            } else if (toolName === 'fetch_url') {
+              toolArgs = { url: (argsXml.match(/<url>([\s\S]*?)<\/url>/) || ['',''])[1].trim() };
+            } else if (toolName === 'read_file') {
+              toolArgs = { path: (argsXml.match(/<path>([\s\S]*?)<\/path>/) || ['',''])[1].trim() };
+            } else if (toolName === 'write_file') {
+              toolArgs = { 
+                path: (argsXml.match(/<path>([\s\S]*?)<\/path>/) || ['',''])[1].trim(),
+                content: (argsXml.match(/<content>([\s\S]*?)<\/content>/) || ['',''])[1].trim()
+              };
+            } else if (toolName === 'run_command') {
+              toolArgs = { command: (argsXml.match(/<command>([\s\S]*?)<\/command>/) || ['',''])[1].trim() };
+            }
+            
+            // Show tool execution status in UI
+            onStepStart(stepIdx, agent.id, agent.name, `[Tool: ${toolName}] Running tool for step ${step.stepNumber}...`);
+            
+            let toolResult = '';
+            try {
+              const res = await fetch(`${API_BASE}/api/tools/${toolName.replace('_', '-')}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(toolArgs)
+              });
+              const data = await res.json();
+              if (data.success) {
+                toolResult = data.output || data.content || 'Success.';
+              } else {
+                toolResult = `Error: ${data.error || 'Execution failed.'}`;
+              }
+            } catch (err) {
+              toolResult = `Fetch failed: ${err.message}`;
+            }
+            
+            // Append turn output and tool results back into history
+            agentPrompt += `\n\n${stepOutput}\n\n[SYSTEM]
+Tool '${toolName}' executed. Result:
+${toolResult}
+
+Analyze the result and continue your work. Output another <tool_call> if you need it, or write your final response.`;
+          }
+          
           results[step.stepNumber] = stepOutput;
           onStepComplete(stepIdx, stepOutput);
         } catch (err) {
           onStepError(stepIdx, err.message);
-          throw err; // Re-throw to stop the loop on error
+          throw err;
         } finally {
-          delete activePromises[step.stepNumber]; // Clean up active tracker
+          delete activePromises[step.stepNumber];
         }
       })();
 
