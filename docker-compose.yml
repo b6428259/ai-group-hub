@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: ai-group-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - OPENCLAW_MODELS_PATH=/app/config/models.json
+      # Optional: override SUT key from environment
+      # - SUT_OPENWEBUI_API_KEY=sk-60139017ac794f349449f05cba00afff
+    volumes:
+      # Mount the ION Server host's OpenClaw config file dynamically
+      - /home/ion20155/.openclaw/agents/main/agent/models.json:/app/config/models.json:ro
+    restart: always

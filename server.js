@@ -1,27 +1,40 @@
 import express from 'express';
 import cors from 'cors';
-import { spawn } from 'child_process';
 import fs from 'fs';
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Enable CORS so the static frontend hosted on Vercel can communicate with this API
+// Enable CORS for remote cross-origin access from Vercel domain
 app.use(cors());
 app.use(express.json());
 
-// Resolve SUT API Key on startup
+// Resolve paths dynamically based on host OS and Docker environment
+let modelsPath = process.env.OPENCLAW_MODELS_PATH;
+if (!modelsPath) {
+  const winPath = 'C:\\Users\\iooon\\.openclaw\\agents\\main\\agent\\models.json';
+  const linuxPath = '/home/ion20155/.openclaw/agents/main/agent/models.json';
+  const dockerPath = '/app/config/models.json';
+  
+  if (fs.existsSync(winPath)) modelsPath = winPath;
+  else if (fs.existsSync(linuxPath)) modelsPath = linuxPath;
+  else if (fs.existsSync(dockerPath)) modelsPath = dockerPath;
+  else modelsPath = linuxPath; // Fallback
+}
+
+console.log(`Resolved models config path: ${modelsPath}`);
+
+// Resolve SUT API Key
 let apiKey = process.env.SUT_OPENWEBUI_API_KEY;
 if (!apiKey) {
   try {
-    const modelsPath = 'C:\\Users\\iooon\\.openclaw\\agents\\main\\agent\\models.json';
     if (fs.existsSync(modelsPath)) {
       const data = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
       apiKey = data.providers?.['sut-openwebui']?.apiKey;
-      console.log('Successfully resolved SUT API Key from models.json');
+      console.log('SUT API Key resolved successfully from models.json');
     }
   } catch (err) {
-    console.error('Failed to read SUT API key from models.json:', err.message);
+    console.error('Failed to read SUT API key:', err.message);
   }
 }
 
@@ -30,33 +43,34 @@ if (!apiKey) {
   console.log('Using default fallback SUT API Key');
 }
 
-// 1. Endpoint to list models via local OpenClaw CLI
+// 1. Endpoint to list models (parses models.json directly, 100% Docker-compatible)
 app.get('/api/models', (req, res) => {
-  let output = '';
-  let errorOutput = '';
-  const child = spawn('cmd.exe', ['/c', 'openclaw', 'models', 'list', '--json'], { shell: false });
-  
-  child.stdout.on('data', (data) => {
-    output += data.toString();
-  });
-  
-  child.stderr.on('data', (data) => {
-    errorOutput += data.toString();
-  });
-  
-  child.on('close', (code) => {
-    if (code === 0) {
-      const start = output.indexOf('[');
-      const end = output.lastIndexOf(']');
-      if (start !== -1 && end !== -1) {
-        res.json(JSON.parse(output.substring(start, end + 1)));
-      } else {
-        res.send(output);
-      }
-    } else {
-      res.status(500).json({ error: 'Failed to list models', details: errorOutput || output });
+  try {
+    if (!fs.existsSync(modelsPath)) {
+      return res.status(500).json({ error: 'Config file not found', path: modelsPath });
     }
-  });
+
+    const rawData = fs.readFileSync(modelsPath, 'utf8');
+    const data = JSON.parse(rawData);
+    const modelsList = [];
+
+    if (data.providers) {
+      Object.entries(data.providers).forEach(([providerId, provider]) => {
+        if (provider.models) {
+          provider.models.forEach(m => {
+            modelsList.push({
+              key: `${providerId}/${m.id}`,
+              name: m.name || m.id
+            });
+          });
+        }
+      });
+    }
+
+    res.json({ models: modelsList });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to parse models configuration', details: err.message });
+  }
 });
 
 // 2. Endpoint to process inferences directly using HTTP to SUT GenAI
@@ -71,7 +85,7 @@ app.post('/api/infer', async (req, res) => {
       ? model.replace('sut-openwebui/', '') 
       : model;
 
-    console.log(`Routing inference to SUT: ${cleanModel}`);
+    console.log(`Routing completions for: ${cleanModel}`);
 
     const response = await fetch('https://genai.sut.ac.th/api/chat/completions', {
       method: 'POST',
@@ -106,10 +120,9 @@ app.post('/api/infer', async (req, res) => {
   }
 });
 
-// Start Express server on 0.0.0.0
 app.listen(port, '0.0.0.0', () => {
   console.log(`==================================================`);
   console.log(`🚀 Standalone Backend API listening at: http://0.0.0.0:${port}`);
-  console.log(`CORS enabled for remote cross-origin access.`);
+  console.log(`Config: ${modelsPath}`);
   console.log(`==================================================`);
 });

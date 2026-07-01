@@ -9,7 +9,7 @@
 ระบบได้รับการปรับโครงสร้างใหม่เพื่อแยกส่วนหน้าบ้านและหลังบ้านออกจากกันอย่างเด็ดขาด (Decoupled Architecture) เพื่อเตรียมพร้อมสำหรับจำลองใช้งานออนไลน์จริง:
 
 1.  **หน้าบ้าน (Frontend App)**: เป็นเว็บ React/Vite แบบ Static Application ซึ่งถูกคอมไพล์และ Deploy ขึ้นระบบ **Vercel**
-2.  **หลังบ้าน (Standalone Backend)**: เป็น Express API Server ขนาดเล็ก รันอยู่บนเครื่อง **ION Server (`100.96.8.110`)** คอยทำหน้าที่รับคำขอ ส่งคำขอ และดึงข้อมูลจาก OpenClaw CLI
+2.  **หลังบ้าน (Standalone Backend)**: เป็น Express API Server รันในตู้คอนเทนเนอร์ **Docker Compose** อยู่บนเครื่อง **ION Server (`100.96.8.110`)** 
 
 ---
 
@@ -57,11 +57,11 @@
 
 ## 🚀 4. สิ่งที่ต้องดำเนินการต่อ (What Needs to Be Done Next)
 
-1.  **แยก Backend ไปเป็น `server.js` บน ION Server**:
-    *   สร้างไฟล์หลังบ้านที่เป็น Express Server เดี่ยว เพื่อรันบนพอร์ต `3000` ของ ION Server
-    *   ตั้งค่าให้รันด้วย `pm2` หรือ `nohup` เพื่อให้ระบบสแตนด์บายตลอดเวลา
+1.  **รันหลังบ้านด้วย Docker Compose บน ION Server**:
+    *   สร้างไฟล์หลังบ้านที่เป็น Express Server เดี่ยว
+    *   เปิดใช้งานด้วยคำสั่ง `docker compose up -d --build` เพื่อให้ทำงานในพื้นหลังตลอดเวลา
 2.  **เปิดการเข้าถึงหน้าต่างพอร์ต (Firewall Configuration)**:
-    *   เปิดรับพอร์ต `3000` (หรือพอร์ตที่เลือกใช้) บน ION Server เพื่อให้เว็บแอปพลิเคชันฝั่ง Vercel สามารถส่งคำขอเข้ามาได้
+    *   เปิดรับพอร์ต `3000` บน ION Server เพื่อให้เว็บแอปพลิเคชันฝั่ง Vercel สามารถส่งคำขอเข้ามาได้
 3.  **ตั้งค่าตัวแปรใน Vercel**:
     *   ทำการอัปโหลดหน้าบ้านขึ้น Vercel และตั้งค่า Environment Variable: `VITE_API_URL=http://100.96.8.110:3000`
 
@@ -70,5 +70,5 @@
 ## ⚠️ 5. ข้อควรจำและข้อควรระวัง (Things to Know)
 
 *   **ปัญหา CORS (Cross-Origin Resource Sharing)**: หลังบ้าน Express จำเป็นต้องเปิดใช้งานมิดเดิลแวร์ `cors` เสมอ เพื่ออนุญาตให้โดเมน Vercel ส่งคำขอข้ามโดเมนเข้ามาประมวลผลได้
-*   **การเชื่อมต่อ OpenClaw CLI**: เมธอด `GET /api/models` ยังจำเป็นต้องใช้การเรียกคำสั่ง `openclaw models list --json` ดังนั้นเครื่อง ION Server จำเป็นต้องติดตั้ง OpenClaw และมีการล็อกอินบัญชีเรียบร้อยแล้ว
-*   **API Key**: ตัวระบบหลังบ้านต้องการ `SUT_OPENWEBUI_API_KEY` เสมอ โดยจะสแกนหาจาก Environment Variable หรือไฟล์เครื่องส่วนตัว `C:\Users\iooon\.openclaw\agents\main\agent\models.json` บนบู๊ตเครื่อง
+*   **การเชื่อมต่อข้อมูลผ่าน Volume Mount**: หลังบ้านรันใน Docker ดังนั้นข้อมูลการตั้งค่าคีย์ของ SUT และรุ่นโมเดลจะถูกดึงผ่านการ Mount ไฟล์ `/home/ion20155/.openclaw/agents/main/agent/models.json` ของเครื่องโฮสต์เข้าไปในคอนเทนเนอร์โดยตรงแบบ Read-Only ทำให้ไม่ต้องกังวลเรื่องการติดตั้ง OpenClaw ข้างในคอนเทนเนอร์
+*   **API Key**: ตัวระบบหลังบ้านต้องการ `SUT_OPENWEBUI_API_KEY` เสมอ โดยจะสแกนหาจาก Environment Variable หรือไฟล์เครื่องส่วนตัว `models.json` ที่เมาท์เข้าไป
