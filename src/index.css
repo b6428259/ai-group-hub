@@ -208,6 +208,11 @@ input, select, textarea {
   transition: all 0.2s;
 }
 
+select option {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
 input:focus, select:focus, textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-glow);
