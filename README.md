@@ -35,7 +35,7 @@ The backend runs an Express API on the ION Server to route OpenClaw CLI commands
     ```bash
     npm start
     ```
-    The server will start on port `3000` (configurable via `PORT` environment variable) and listen on all network interfaces (`0.0.0.0`), with CORS fully enabled.
+    The server will start on port `3002` (configurable via `PORT` environment variable) and listen on all network interfaces (`0.0.0.0`), with CORS fully enabled.
 
 5.  *(Optional)* Manage the process in the background using PM2:
     ```bash
@@ -65,7 +65,7 @@ The frontend is a React + Vite application. You can deploy it to Vercel in secon
     *   Set the **Output Directory** to `dist` if prompted.
     *   Set the **Environment Variable** `VITE_API_URL` to point to your ION Server:
         *   **Name**: `VITE_API_URL`
-        *   **Value**: `http://100.96.8.110:3000`
+        *   **Value**: `http://100.96.8.110:3002`
 4.  To deploy to production:
     ```bash
     vercel --prod
