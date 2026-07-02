@@ -93,6 +93,11 @@ export default function App() {
     const saved = localStorage.getItem('swarm_auto_approve');
     return saved ? JSON.parse(saved) : true;
   });
+  const autoApproveRef = useRef(autoApprove);
+  useEffect(() => {
+    autoApproveRef.current = autoApprove;
+  }, [autoApprove]);
+
   const [pendingApproval, setPendingApproval] = useState(null);
   const [boardroomDialogues, setBoardroomDialogues] = useState([]);
   const [terminalLogs, setTerminalLogs] = useState([]);
@@ -352,7 +357,7 @@ export default function App() {
           setTerminalLogs(prev => [...prev, logText]);
         },
         onRequireToolApproval: ({ stepIdx, agentId, agentName, toolName, toolArgs, approve, reject }) => {
-          if (autoApprove) {
+          if (autoApproveRef.current) {
             approve(toolArgs);
             return;
           }
@@ -538,7 +543,7 @@ export default function App() {
           setTerminalLogs(prev => [...prev, logText]);
         },
         onRequireToolApproval: ({ stepIdx, agentId, agentName, toolName, toolArgs, approve, reject }) => {
-          if (autoApprove) {
+          if (autoApproveRef.current) {
             approve(toolArgs);
             return;
           }
@@ -1078,43 +1083,94 @@ Agent:`;
               )}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
-              <button
-                className="btn"
-                style={{
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  color: '#ef4444',
-                  border: '1px solid rgba(239, 68, 68, 0.2)',
-                  padding: '8px 18px',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontWeight: '600'
-                }}
-                onClick={() => {
-                  const rejectFn = pendingApproval.reject;
-                  setPendingApproval(null);
-                  rejectFn(new Error('User rejected tool execution.'));
-                }}
-              >
-                Reject & Block
-              </button>
-              <button
-                className="btn btn-primary"
-                style={{
-                  padding: '8px 24px',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontWeight: '600'
-                }}
-                onClick={() => {
-                  const resolveFn = pendingApproval.resolve;
-                  const args = pendingApproval.toolArgs;
-                  setPendingApproval(null);
-                  resolveFn(args);
-                }}
-              >
-                Approve & Run
-              </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="btn"
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    color: '#ef4444',
+                    border: '1px solid rgba(239, 68, 68, 0.2)',
+                    padding: '8px 14px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.78rem'
+                  }}
+                  onClick={() => {
+                    const rejectFn = pendingApproval.reject;
+                    setPendingApproval(null);
+                    rejectFn(new Error('Step execution aborted by user.'));
+                  }}
+                  title="Aborts this entire step immediately"
+                >
+                  🛑 Abort Step
+                </button>
+                <button
+                  className="btn"
+                  style={{
+                    background: 'rgba(251, 146, 60, 0.1)',
+                    color: '#fb923c',
+                    border: '1px solid rgba(251, 146, 60, 0.2)',
+                    padding: '8px 14px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.78rem'
+                  }}
+                  onClick={() => {
+                    const rejectFn = pendingApproval.reject;
+                    setPendingApproval(null);
+                    rejectFn(new Error('Tool execution rejected by user.'));
+                  }}
+                  title="Tells the agent to choose another way"
+                >
+                  ⚠️ Reject & Retry
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="btn btn-primary"
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    background: 'linear-gradient(135deg, #10b981, #059669)',
+                    border: 'none',
+                    fontSize: '0.78rem'
+                  }}
+                  onClick={() => {
+                    const resolveFn = pendingApproval.resolve;
+                    const args = pendingApproval.toolArgs;
+                    setAutoApprove(true);
+                    setPendingApproval(null);
+                    resolveFn(args);
+                  }}
+                  title="Approves this tool and turns Auto-Approve ON for rest of swarm"
+                >
+                  🚀 Approve & Auto-Run
+                </button>
+                <button
+                  className="btn btn-primary"
+                  style={{
+                    padding: '8px 20px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.78rem'
+                  }}
+                  onClick={() => {
+                    const resolveFn = pendingApproval.resolve;
+                    const args = pendingApproval.toolArgs;
+                    setPendingApproval(null);
+                    resolveFn(args);
+                  }}
+                  title="Approve only this execution"
+                >
+                  Approve & Run
+                </button>
+              </div>
             </div>
           </div>
         </div>
