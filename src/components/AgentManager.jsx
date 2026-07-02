@@ -39,6 +39,7 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
   const [formPrompt, setFormPrompt] = useState('');
   const [formModel, setFormModel] = useState('');
   const [formTemp, setFormTemp] = useState(0.5);
+  const [formReasoningEffort, setFormReasoningEffort] = useState('');
 
   const startEdit = (agent) => {
     setIsNew(false);
@@ -49,6 +50,7 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
     setFormPrompt(agent.systemPrompt);
     setFormModel(agent.model || (models.length > 0 ? models[0].key : ''));
     setFormTemp(agent.temperature ?? 0.5);
+    setFormReasoningEffort(agent.reasoningEffort || '');
     setShowModal(true);
   };
 
@@ -61,6 +63,7 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
     setFormPrompt('');
     setFormModel(models.length > 0 ? models[0].key : '');
     setFormTemp(0.5);
+    setFormReasoningEffort('');
     setShowModal(true);
   };
 
@@ -69,6 +72,7 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
     setFormRole(template.role);
     setFormPrompt(template.systemPrompt);
     setFormTemp(template.temperature);
+    setFormReasoningEffort('');
   };
 
   const handleSave = (e) => {
@@ -87,6 +91,7 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
         systemPrompt: formPrompt,
         model: formModel,
         temperature: parseFloat(formTemp),
+        reasoningEffort: formReasoningEffort,
         active: true
       };
       updated = [...agents, newAgent];
@@ -97,7 +102,8 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
         role: formRole,
         systemPrompt: formPrompt,
         model: formModel,
-        temperature: parseFloat(formTemp)
+        temperature: parseFloat(formTemp),
+        reasoningEffort: formReasoningEffort
       } : a);
     }
 
@@ -209,8 +215,26 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
                 )}
               </div>
             </div>
-            <div className="agent-model-tag" title={agent.model}>
-              {agent.model ? agent.model.split('/').pop() : 'OpenClaw Default'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+              <div className="agent-model-tag" title={agent.model}>
+                {agent.model ? agent.model.split('/').pop() : 'OpenClaw Default'}
+              </div>
+              {agent.reasoningEffort && (
+                <div style={{
+                  fontSize: '0.6rem',
+                  fontWeight: '850',
+                  color: 'var(--accent)',
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  padding: '1px 5px',
+                  borderRadius: '3px',
+                  border: '1px solid rgba(99, 102, 241, 0.15)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '3px'
+                }}>
+                  🧠 {agent.reasoningEffort.toUpperCase()}
+                </div>
+              )}
             </div>
 
             {/* Gamified stats */}
@@ -323,6 +347,44 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
                   ))}
                 </select>
               </div>
+
+              {/* Reasoning / Thinking Level Configuration */}
+              {(() => {
+                const selectedModelMeta = models.find(m => m.key === formModel);
+                const hasReasoning = selectedModelMeta?.reasoning;
+                const supportedEfforts = selectedModelMeta?.compat?.supportedReasoningEfforts || ['low', 'medium', 'high'];
+                
+                if (!hasReasoning) return null;
+
+                return (
+                  <div className="form-group" style={{ 
+                    background: 'rgba(99, 102, 241, 0.04)', 
+                    border: '1px solid rgba(99, 102, 241, 0.12)', 
+                    padding: '12px', 
+                    borderRadius: '6px',
+                    marginTop: '8px'
+                  }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent)', fontWeight: '700' }}>
+                      🧠 Thinking Level (Reasoning Effort)
+                    </label>
+                    <p style={{ fontSize: '0.68rem', color: 'var(--text-dark)', marginBottom: '8px' }}>
+                      Configure the cognitive depth and response analysis effort for this model.
+                    </p>
+                    <select 
+                      value={formReasoningEffort} 
+                      onChange={(e) => setFormReasoningEffort(e.target.value)}
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none', borderRadius: '4px' }}
+                    >
+                      <option value="">Default (Auto / Managed)</option>
+                      {supportedEfforts.map(effort => (
+                        <option key={effort} value={effort}>
+                          {effort.toUpperCase()} ({effort === 'low' ? 'Fast & Brief' : effort === 'medium' ? 'Balanced' : 'Deep & Thorough'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
 
               <div className="form-group">
                 <div style={{ display: 'flex', justifycontent: 'space-between' }}>

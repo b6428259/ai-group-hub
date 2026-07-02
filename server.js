@@ -63,7 +63,9 @@ app.get('/api/models', (req, res) => {
           provider.models.forEach(m => {
             modelsList.push({
               key: `${providerId}/${m.id}`,
-              name: m.name || m.id
+              name: m.name || m.id,
+              reasoning: m.reasoning || false,
+              compat: m.compat || null
             });
           });
         }
@@ -78,7 +80,7 @@ app.get('/api/models', (req, res) => {
 // 2. Endpoint to process inferences (dynamically routes based on provider)
 app.post('/api/infer', async (req, res) => {
   try {
-    const { model, prompt } = req.body;
+    const { model, prompt, reasoningEffort } = req.body;
     if (!model || !prompt) {
       return res.status(400).json({ error: 'Missing model or prompt' });
     }
@@ -88,7 +90,7 @@ app.post('/api/infer', async (req, res) => {
     const providerId = parts[0];
     const cleanModel = parts.slice(1).join('/');
 
-    console.log(`Routing inference: Provider="${providerId}" Model="${cleanModel}"`);
+    console.log(`Routing inference: Provider="${providerId}" Model="${cleanModel}" ReasoningEffort="${reasoningEffort || 'none'}"`);
 
     // Fetch config for this provider
     let provider = providersConfig[providerId];
@@ -117,19 +119,25 @@ app.post('/api/infer', async (req, res) => {
 
     const isMaxPlus = (providerId === 'maxplus-ai');
 
+    const requestBody = {
+      model: cleanModel,
+      messages: [
+        { role: 'user', content: prompt }
+      ],
+      stream: isMaxPlus
+    };
+
+    if (reasoningEffort) {
+      requestBody.reasoning_effort = reasoningEffort;
+    }
+
     const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify({
-        model: cleanModel,
-        messages: [
-          { role: 'user', content: prompt }
-        ],
-        stream: isMaxPlus
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {

@@ -14,13 +14,13 @@ export async function fetchModels() {
   return data.models || [];
 }
 
-export async function runInference(model, prompt) {
+export async function runInference(model, prompt, reasoningEffort = null) {
   const response = await fetch(`${API_BASE}/api/infer`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model, prompt }),
+    body: JSON.stringify({ model, prompt, reasoningEffort }),
   });
   
   if (!response.ok) {

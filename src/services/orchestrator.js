@@ -124,7 +124,7 @@ export async function runOrchestration({
       const ctoAgent = activeAgents.find(a => a.role === 'CTO') || activeAgents[0];
       const ctoPrompt = `You are the Chief Technology Officer. The CEO has presented this goal: "${mainTask}".
 Provide your initial technical analysis, directory structure choices, and port safety rules (ports 3000, 3001, 3002, 5173, 5174, 8080 are BLOCKED; you must use high ports 8000-8020). Keep it to 2-3 short, highly technical sentences.`;
-      ctoResp = await runInference(ctoAgent.model || ceoModel, ctoPrompt);
+      ctoResp = await runInference(ctoAgent.model || ceoModel, ctoPrompt, ctoAgent.reasoningEffort);
       onBoardroomDialogue({
         agentId: ctoAgent.id,
         agentName: ctoAgent.name,
@@ -137,7 +137,7 @@ Provide your initial technical analysis, directory structure choices, and port s
       const pmAgent = activeAgents.find(a => a.role === 'PM') || activeAgents[0];
       const pmPrompt = `You are the Vice President of Product. The CEO goal is: "${mainTask}". The CTO has suggested technical designs: "${ctoResp}".
 Discuss the implementation roadmap phases, milestones, and task dependencies. Keep it to 2-3 brief sentences focused on timelines and resource coordination.`;
-      pmResp = await runInference(pmAgent.model || ceoModel, pmPrompt);
+      pmResp = await runInference(pmAgent.model || ceoModel, pmPrompt, pmAgent.reasoningEffort);
       onBoardroomDialogue({
         agentId: pmAgent.id,
         agentName: pmAgent.name,
@@ -192,7 +192,8 @@ You MUST wrap the planning details of each step in the following XML tags:
 
 You can write explanations or introductions if you want, but you MUST include the <step> tags for each step.`;
 
-    let planText = await runInference(ceoModel, ceoPlanPrompt);
+    const ceoAgent = activeAgents.find(a => a.id === 'ceo') || activeAgents[0];
+    let planText = await runInference(ceoModel, ceoPlanPrompt, ceoAgent.reasoningEffort);
     let steps = [];
     
     // --- TIER 1: JSON Parsing ---
@@ -531,7 +532,7 @@ Provide your response. Use a tool if you need to access files, run commands, or 
           const maxTurns = 5;
           
           for (let turn = 0; turn < maxTurns; turn++) {
-            stepOutput = await runInference(agent.model || ceoModel, agentPrompt);
+            stepOutput = await runInference(agent.model || ceoModel, agentPrompt, agent.reasoningEffort);
             
             // Check if agent wants to execute a tool
             const toolMatch = stepOutput.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
@@ -707,7 +708,8 @@ ${synthesisOutputsText}
 
 Consolidate these outputs into a concise, professional final response. Be brief. Output in Markdown.`;
 
-  const finalResponse = await runInference(ceoModel, synthesisPrompt);
+  const ceoAgent = activeAgents.find(a => a.id === 'ceo') || activeAgents[0];
+  const finalResponse = await runInference(ceoModel, synthesisPrompt, ceoAgent.reasoningEffort);
 
   // Parse any unhire tags in the final response
   const unhireMatches = finalResponse.matchAll(/<(?:unhire_agent|fire_agent)>([\s\S]*?)<\/(?:unhire_agent|fire_agent)>/gi);
