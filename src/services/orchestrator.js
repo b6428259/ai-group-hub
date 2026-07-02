@@ -57,6 +57,9 @@ export async function runOrchestration({
   onFinalResponse,
   onAgentHired,
   onAgentUnhired, // Callback to fire/unhire an agent from active list
+  onBoardroomDialogue, // Callback when boardroom discussion progresses
+  onRequireToolApproval, // Callback to request user approval for tools
+  onTerminalLog, // Callback for live command logs
   existingSteps, // Optional: list of steps from a previous run to resume
 }) {
   const activeAgents = agents.filter(a => a.active);
@@ -85,9 +88,74 @@ export async function runOrchestration({
 
   } else {
     // --- NEW RUN MODE ---
-    onStepStart(-1, 'ceo', 'CEO', 'Analyzing task, hiring agents, and planning execution...');
+    onStepStart(-1, 'ceo', 'CEO', 'Analyzing task and starting Swarm Boardroom Alignment...');
     
+    // --- 1. MEMORY STORAGE LOAD ---
+    let memoryText = '';
+    const API_BASE = import.meta.env.VITE_API_URL || '';
+    try {
+      const res = await fetch(`${API_BASE}/api/memory`);
+      const data = await res.json();
+      if (data.success && data.memory && data.memory.length > 0) {
+        const lastThree = data.memory.slice(-3);
+        memoryText = `### Organizational Memory of Recent Successful Projects:\n` + 
+          lastThree.map(m => `- Goal: "${m.goal}"\n  Status: ${m.status}\n  Summary: ${m.summary || 'Completed successfully.'}`).join('\n') + '\n';
+      }
+    } catch (e) {
+      console.warn('⚠️ Failed to load organizational memory:', e.message);
+    }
+
+    let ctoResp = '';
+    let pmResp = '';
+
+    // --- 2. BOARDROOM DISCUSSION PHASE ---
+    if (onBoardroomDialogue) {
+      // Turn 1: CEO introduces the goal
+      const ceoIntro = `Dear colleagues, we have received a new corporate directive from the user: "${mainTask}". Let's align our objectives. CTO, please share the technical architecture constraints and folder safety policies. PM, please evaluate the roadmap phase dependencies.`;
+      onBoardroomDialogue({
+        agentId: 'ceo',
+        agentName: 'Chief Executive Officer',
+        role: 'CEO',
+        text: ceoIntro
+      });
+      await new Promise(r => setTimeout(r, 1200));
+
+      // Turn 2: CTO responds
+      const ctoAgent = activeAgents.find(a => a.role === 'CTO') || activeAgents[0];
+      const ctoPrompt = `You are the Chief Technology Officer. The CEO has presented this goal: "${mainTask}".
+Provide your initial technical analysis, directory structure choices, and port safety rules (ports 3000, 3001, 3002, 5173, 5174, 8080 are BLOCKED; you must use high ports 8000-8020). Keep it to 2-3 short, highly technical sentences.`;
+      ctoResp = await runInference(ctoAgent.model || ceoModel, ctoPrompt);
+      onBoardroomDialogue({
+        agentId: ctoAgent.id,
+        agentName: ctoAgent.name,
+        role: 'CTO',
+        text: ctoResp
+      });
+      await new Promise(r => setTimeout(r, 1200));
+
+      // Turn 3: PM responds
+      const pmAgent = activeAgents.find(a => a.role === 'PM') || activeAgents[0];
+      const pmPrompt = `You are the Vice President of Product. The CEO goal is: "${mainTask}". The CTO has suggested technical designs: "${ctoResp}".
+Discuss the implementation roadmap phases, milestones, and task dependencies. Keep it to 2-3 brief sentences focused on timelines and resource coordination.`;
+      pmResp = await runInference(pmAgent.model || ceoModel, pmPrompt);
+      onBoardroomDialogue({
+        agentId: pmAgent.id,
+        agentName: pmAgent.name,
+        role: 'PM',
+        text: pmResp
+      });
+      await new Promise(r => setTimeout(r, 1200));
+    }
+
+    onStepStart(-1, 'ceo', 'CEO', 'Consolidating boardroom decisions and generating roadmap plan...');
+
     const ceoPlanPrompt = `Create a step-by-step task execution plan for a team of specialized AI agents representing a corporate enterprise to solve: "${mainTask}"
+
+${memoryText ? `Inject learnings from our past projects memory if helpful:\n${memoryText}\n` : ''}
+
+Boardroom Alignment Notes:
+- CTO: "${ctoResp || ''}"
+- PM: "${pmResp || ''}"
 
 Corporate Agent Directory:
 ${agentsListText}
@@ -491,6 +559,43 @@ Provide your response. Use a tool if you need to access files, run commands, or 
               toolArgs = { command: (argsXml.match(/<command>([\s\S]*?)<\/command>/) || ['',''])[1].trim() };
             }
             
+            // Human-in-the-Loop interceptor
+            let finalArgs = { ...toolArgs };
+            let isRejected = false;
+            let rejectReason = '';
+
+            if (onRequireToolApproval) {
+              try {
+                onStepStart(stepIdx, agent.id, agent.name, `[HITL Waiting] Approval required for tool: ${toolName}...`);
+                
+                // Suspend execution and wait for user decision
+                finalArgs = await new Promise((resolveApprove, rejectApprove) => {
+                  onRequireToolApproval({
+                    stepIdx,
+                    agentId: agent.id,
+                    agentName: agent.name,
+                    toolName,
+                    toolArgs,
+                    approve: (editedArgs) => resolveApprove(editedArgs),
+                    reject: (reason) => rejectApprove(new Error(reason || 'Tool execution rejected by user.'))
+                  });
+                });
+              } catch (err) {
+                isRejected = true;
+                rejectReason = err.message;
+              }
+            }
+
+            if (isRejected) {
+              toolResult = `Error: ${rejectReason}`;
+              agentPrompt += `\n\n${stepOutput}\n\n[SYSTEM]
+Tool '${toolName}' execution was REJECTED by user.
+Reason: ${toolResult}
+
+Acknowledge the rejection and choose an alternative approach or report failure.`;
+              continue;
+            }
+
             // Show tool execution status in UI
             onStepStart(stepIdx, agent.id, agent.name, `[Tool: ${toolName}] Running tool for step ${step.stepNumber}...`);
             
@@ -499,7 +604,7 @@ Provide your response. Use a tool if you need to access files, run commands, or 
               const res = await fetch(`${API_BASE}/api/tools/${toolName.replace('_', '-')}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(toolArgs)
+                body: JSON.stringify(finalArgs)
               });
               const data = await res.json();
               if (data.success) {
@@ -509,6 +614,11 @@ Provide your response. Use a tool if you need to access files, run commands, or 
               }
             } catch (err) {
               toolResult = `Fetch failed: ${err.message}`;
+            }
+
+            // Stream terminal output if relevant
+            if (toolName === 'run_command' && onTerminalLog) {
+              onTerminalLog(`$ ${finalArgs.command}\n${toolResult}\n`);
             }
             
             // Append turn output and tool results back into history
