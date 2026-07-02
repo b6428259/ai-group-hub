@@ -2,6 +2,17 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import { spawn } from 'child_process';
+import os from 'os';
+import pathModule from 'path';
+
+function resolvePath(inputPath) {
+  if (!inputPath) return '';
+  let resolved = inputPath;
+  if (inputPath.startsWith('~')) {
+    resolved = pathModule.join(os.homedir(), inputPath.slice(1));
+  }
+  return pathModule.resolve(resolved);
+}
 
 const app = express();
 const port = process.env.PORT || 3002;
@@ -227,16 +238,16 @@ app.post('/api/tools/read-file', (req, res) => {
   if (!path) return res.status(400).json({ success: false, error: 'Missing path' });
   console.log(`📖 [Tool: Read File] ${path}`);
   try {
-    let targetPath = path;
-    const baseName = path.split(/[/\\]/).pop();
+    let targetPath = resolvePath(path);
+    const baseName = pathModule.basename(targetPath);
     if (baseName === 'index.html' || baseName === 'index.css') {
       if (fs.existsSync(`sandbox/${baseName}`)) {
-        targetPath = `sandbox/${baseName}`;
+        targetPath = pathModule.resolve(`sandbox/${baseName}`);
         console.log(`⚠️ Redirected read to: ${targetPath}`);
       }
     }
     if (!fs.existsSync(targetPath)) {
-      return res.status(404).json({ success: false, error: 'File does not exist.' });
+      return res.status(404).json({ success: false, error: `File does not exist at: ${targetPath}` });
     }
     const content = fs.readFileSync(targetPath, 'utf8');
     res.json({ success: true, content });
@@ -250,15 +261,22 @@ app.post('/api/tools/write-file', (req, res) => {
   if (!path || content === undefined) return res.status(400).json({ success: false, error: 'Missing path or content' });
   console.log(`💾 [Tool: Write File] ${path}`);
   try {
-    let targetPath = path;
-    const baseName = path.split(/[/\\]/).pop();
+    let targetPath = resolvePath(path);
+    const baseName = pathModule.basename(targetPath);
     if (baseName === 'index.html' || baseName === 'index.css' || baseName === 'server.js' || baseName === 'package.json' || baseName === 'vite.config.js') {
       if (!fs.existsSync('sandbox')) {
         fs.mkdirSync('sandbox');
       }
-      targetPath = `sandbox/${baseName}`;
+      targetPath = pathModule.resolve(`sandbox/${baseName}`);
       console.log(`⚠️ Redirected write to: ${targetPath}`);
     }
+    
+    // Ensure parent directories exist
+    const parentDir = pathModule.dirname(targetPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    
     fs.writeFileSync(targetPath, content, 'utf8');
     res.json({ success: true, output: `File written successfully to ${targetPath}` });
   } catch (err) {

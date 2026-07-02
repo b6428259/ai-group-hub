@@ -221,6 +221,9 @@ export default function App() {
             if (prev.some(a => a.id === newAgent.id)) return prev;
             return [...prev, newAgent];
           });
+        },
+        onAgentUnhired: (agentId) => {
+          setAgents(prev => prev.filter(a => a.id !== agentId));
         }
       });
     } catch (err) {
@@ -306,6 +309,9 @@ export default function App() {
             if (prev.some(a => a.id === newAgent.id)) return prev;
             return [...prev, newAgent];
           });
+        },
+        onAgentUnhired: (agentId) => {
+          setAgents(prev => prev.filter(a => a.id !== agentId));
         }
       });
     } catch (err) {

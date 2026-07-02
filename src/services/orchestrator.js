@@ -56,6 +56,7 @@ export async function runOrchestration({
   onCEOPlanCreated,
   onFinalResponse,
   onAgentHired,
+  onAgentUnhired, // Callback to fire/unhire an agent from active list
   existingSteps, // Optional: list of steps from a previous run to resume
 }) {
   const activeAgents = agents.filter(a => a.active);
@@ -102,6 +103,7 @@ Workflow Hierarchy Guidelines:
 8. PHASE 8: FINAL CEO SIGN-OFF (Assigned to: CEO) - CEO signs off and delivers the final package.
 
 If no existing agent fits a specific execution role (e.g. you need a specialized database DBA or chef), you can hire a new specialized agent by setting "newAgentSpec".
+If an agent is no longer needed after their step, you or any subsequent agent can fire/unhire them by outputting: <unhire_agent>agent_id</unhire_agent> (e.g., <unhire_agent>new_agent_5</unhire_agent>) in your step output response.
 To save tokens, specify which step numbers this step depends on in the depends_on tag (comma-separated).
 
 You MUST wrap the planning details of each step in the following XML tags:
@@ -520,6 +522,16 @@ Analyze the result and continue your work. Output another <tool_call> if you nee
           // ✅ Mark step as COMPLETED locally so DAG never re-fires it
           step.status = 'completed';
           results[step.stepNumber] = stepOutput;
+
+          // Parse any unhire tags in the output
+          const unhireMatches = stepOutput.matchAll(/<(?:unhire_agent|fire_agent)>([\s\S]*?)<\/(?:unhire_agent|fire_agent)>/gi);
+          for (const match of unhireMatches) {
+            const unhireAgentId = match[1].trim();
+            if (onAgentUnhired) {
+              onAgentUnhired(unhireAgentId);
+            }
+          }
+
           onStepComplete(stepIdx, stepOutput);
         } catch (err) {
           // ❌ Mark step as ERROR locally so DAG skips it
@@ -586,6 +598,16 @@ ${synthesisOutputsText}
 Consolidate these outputs into a concise, professional final response. Be brief. Output in Markdown.`;
 
   const finalResponse = await runInference(ceoModel, synthesisPrompt);
+
+  // Parse any unhire tags in the final response
+  const unhireMatches = finalResponse.matchAll(/<(?:unhire_agent|fire_agent)>([\s\S]*?)<\/(?:unhire_agent|fire_agent)>/gi);
+  for (const match of unhireMatches) {
+    const unhireAgentId = match[1].trim();
+    if (onAgentUnhired) {
+      onAgentUnhired(unhireAgentId);
+    }
+  }
+
   onStepComplete(processedSteps.length, finalResponse);
   onFinalResponse(finalResponse);
 }
