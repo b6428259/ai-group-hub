@@ -89,6 +89,40 @@ export default function App() {
   const [finalResponse, setFinalResponse] = useState('');
   const [error, setError] = useState(null);
 
+  const [autoApprove, setAutoApprove] = useState(() => {
+    const saved = localStorage.getItem('swarm_auto_approve');
+    return saved ? JSON.parse(saved) : true;
+  });
+  const [pendingApproval, setPendingApproval] = useState(null);
+  const [boardroomDialogues, setBoardroomDialogues] = useState([]);
+  const [terminalLogs, setTerminalLogs] = useState([]);
+  const [showTerminal, setShowTerminal] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('swarm_auto_approve', JSON.stringify(autoApprove));
+  }, [autoApprove]);
+
+  // Ensure agents always have gamified stats initialized
+  useEffect(() => {
+    setAgents(prev => {
+      let changed = false;
+      const updated = prev.map(a => {
+        if (a.level === undefined || a.xp === undefined || a.energy === undefined || a.mood === undefined) {
+          changed = true;
+          return {
+            ...a,
+            level: a.level || 1,
+            xp: a.xp || 0,
+            energy: a.energy !== undefined ? a.energy : 100,
+            mood: a.mood || 'idle'
+          };
+        }
+        return a;
+      });
+      return changed ? updated : prev;
+    });
+  }, []);
+
   const handleOverallModelChange = (modelKey) => {
     setOverallModel(modelKey);
     if (!modelKey) return;
@@ -149,6 +183,8 @@ export default function App() {
     setError(null);
     setFinalResponse('');
     setSteps([]);
+    setBoardroomDialogues([]);
+    setTerminalLogs([]);
     setCeoStep({
       status: 'running',
       statusText: 'Contacting Secretary to gather details and initialize planning...'
@@ -172,6 +208,17 @@ export default function App() {
               }
               return prev.map((s, idx) => idx === stepIdx ? { ...s, status: 'running', statusText } : s);
             });
+            // Gamification: Deduct energy and set working mood
+            setAgents(prev => prev.map(a => {
+              if (a.id === agentId) {
+                return {
+                  ...a,
+                  energy: Math.max(0, (a.energy !== undefined ? a.energy : 100) - 15),
+                  mood: 'working'
+                };
+              }
+              return a;
+            }));
           }
         },
         onCEOPlanCreated: (plannedSteps) => {
@@ -197,6 +244,35 @@ export default function App() {
               }
               return prev.map((s, idx) => idx === stepIdx ? { ...s, status: 'completed', output: outputText } : s);
             });
+
+            // Gamification: Add XP + Rest energy
+            setSteps(currentSteps => {
+              const targetStep = currentSteps[stepIdx] || (stepIdx >= 0 ? currentSteps[stepIdx] : null);
+              const agentId = targetStep ? targetStep.assignedAgentId : null;
+              if (agentId) {
+                setAgents(prev => prev.map(a => {
+                  if (a.id === agentId) {
+                    const currentXp = a.xp || 0;
+                    const currentLevel = a.level || 1;
+                    let newXp = currentXp + 40;
+                    let newLevel = currentLevel;
+                    if (newXp >= 100) {
+                      newXp -= 100;
+                      newLevel += 1;
+                    }
+                    return {
+                      ...a,
+                      level: newLevel,
+                      xp: newXp,
+                      energy: Math.min(100, (a.energy !== undefined ? a.energy : 100) + 10),
+                      mood: 'proud'
+                    };
+                  }
+                  return a;
+                }));
+              }
+              return currentSteps;
+            });
           }
         },
         onStepError: (stepIdx, errMessage) => {
@@ -210,20 +286,85 @@ export default function App() {
               }
               return prev.map((s, idx) => idx === stepIdx ? { ...s, status: 'error', error: errMessage } : s);
             });
+
+            // Gamification: Reduce energy + set frustrated mood
+            setSteps(currentSteps => {
+              const targetStep = currentSteps[stepIdx];
+              const agentId = targetStep ? targetStep.assignedAgentId : null;
+              if (agentId) {
+                setAgents(prev => prev.map(a => {
+                  if (a.id === agentId) {
+                    return {
+                      ...a,
+                      mood: 'frustrated',
+                      energy: Math.max(0, (a.energy !== undefined ? a.energy : 100) - 20)
+                    };
+                  }
+                  return a;
+                }));
+              }
+              return currentSteps;
+            });
           }
           setError(errMessage);
         },
-        onFinalResponse: (resp) => {
+        onFinalResponse: async (resp) => {
           setFinalResponse(resp);
+          // Persist the run details to sandbox memory storage!
+          const API_BASE = import.meta.env.VITE_API_URL || '';
+          try {
+            await fetch(`${API_BASE}/api/memory`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                goal: mainTask,
+                status: 'completed',
+                summary: resp.slice(0, 300)
+              })
+            });
+          } catch (e) {
+            console.error('Failed to log memory entry:', e);
+          }
         },
         onAgentHired: (newAgent) => {
           setAgents(prev => {
             if (prev.some(a => a.id === newAgent.id)) return prev;
-            return [...prev, newAgent];
+            return [...prev, { ...newAgent, level: 1, xp: 0, energy: 100, mood: 'idle' }];
           });
         },
         onAgentUnhired: (agentId) => {
           setAgents(prev => prev.filter(a => a.id !== agentId));
+        },
+        onBoardroomDialogue: (dialogue) => {
+          setBoardroomDialogues(prev => [...prev, dialogue]);
+          setAgents(prev => prev.map(a => {
+            if (a.id === dialogue.agentId || a.role === dialogue.role) {
+              return {
+                ...a,
+                energy: Math.max(0, (a.energy !== undefined ? a.energy : 100) - 5),
+                mood: 'working'
+              };
+            }
+            return a;
+          }));
+        },
+        onTerminalLog: (logText) => {
+          setTerminalLogs(prev => [...prev, logText]);
+        },
+        onRequireToolApproval: ({ stepIdx, agentId, agentName, toolName, toolArgs, approve, reject }) => {
+          if (autoApprove) {
+            approve(toolArgs);
+            return;
+          }
+          setPendingApproval({
+            stepIdx,
+            agentId,
+            agentName,
+            toolName,
+            toolArgs,
+            resolve: approve,
+            reject: reject
+          });
         }
       });
     } catch (err) {
@@ -238,6 +379,8 @@ export default function App() {
     setIsRunning(true);
     setError(null);
     setFinalResponse('');
+    setBoardroomDialogues([]);
+    setTerminalLogs([]);
     
     // Find the first step index that is NOT completed
     const firstIncompleteIdx = steps.findIndex(s => s.status !== 'completed');
@@ -266,6 +409,17 @@ export default function App() {
               }
               return prev.map((s, idx) => idx === stepIdx ? { ...s, status: 'running', statusText } : s);
             });
+            // Gamification: Deduct energy
+            setAgents(prev => prev.map(a => {
+              if (a.id === agentId) {
+                return {
+                  ...a,
+                  energy: Math.max(0, (a.energy !== undefined ? a.energy : 100) - 15),
+                  mood: 'working'
+                };
+              }
+              return a;
+            }));
           }
         },
         onCEOPlanCreated: (plannedSteps) => {
@@ -285,6 +439,35 @@ export default function App() {
               }
               return prev.map((s, idx) => idx === stepIdx ? { ...s, status: 'completed', output: outputText } : s);
             });
+
+            // Gamification: Add XP
+            setSteps(currentSteps => {
+              const targetStep = currentSteps[stepIdx] || (stepIdx >= 0 ? currentSteps[stepIdx] : null);
+              const agentId = targetStep ? targetStep.assignedAgentId : null;
+              if (agentId) {
+                setAgents(prev => prev.map(a => {
+                  if (a.id === agentId) {
+                    const currentXp = a.xp || 0;
+                    const currentLevel = a.level || 1;
+                    let newXp = currentXp + 40;
+                    let newLevel = currentLevel;
+                    if (newXp >= 100) {
+                      newXp -= 100;
+                      newLevel += 1;
+                    }
+                    return {
+                      ...a,
+                      level: newLevel,
+                      xp: newXp,
+                      energy: Math.min(100, (a.energy !== undefined ? a.energy : 100) + 10),
+                      mood: 'proud'
+                    };
+                  }
+                  return a;
+                }));
+              }
+              return currentSteps;
+            });
           }
         },
         onStepError: (stepIdx, errMessage) => {
@@ -298,20 +481,76 @@ export default function App() {
               }
               return prev.map((s, idx) => idx === stepIdx ? { ...s, status: 'error', error: errMessage } : s);
             });
+            
+            // Gamification: Deduct energy
+            setSteps(currentSteps => {
+              const targetStep = currentSteps[stepIdx];
+              const agentId = targetStep ? targetStep.assignedAgentId : null;
+              if (agentId) {
+                setAgents(prev => prev.map(a => {
+                  if (a.id === agentId) {
+                    return {
+                      ...a,
+                      mood: 'frustrated',
+                      energy: Math.max(0, (a.energy !== undefined ? a.energy : 100) - 20)
+                    };
+                  }
+                  return a;
+                }));
+              }
+              return currentSteps;
+            });
           }
           setError(errMessage);
         },
-        onFinalResponse: (resp) => {
+        onFinalResponse: async (resp) => {
           setFinalResponse(resp);
+          // Persist memory
+          const API_BASE = import.meta.env.VITE_API_URL || '';
+          try {
+            await fetch(`${API_BASE}/api/memory`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                goal: mainTask,
+                status: 'completed',
+                summary: resp.slice(0, 300)
+              })
+            });
+          } catch (e) {
+            console.error('Failed to log memory entry:', e);
+          }
         },
         onAgentHired: (newAgent) => {
           setAgents(prev => {
             if (prev.some(a => a.id === newAgent.id)) return prev;
-            return [...prev, newAgent];
+            return [...prev, { ...newAgent, level: 1, xp: 0, energy: 100, mood: 'idle' }];
           });
         },
         onAgentUnhired: (agentId) => {
           setAgents(prev => prev.filter(a => a.id !== agentId));
+        },
+        onBoardroomDialogue: (dialogue) => {
+          // Resume mode usually doesn't have boardroom dialogues, but good to register
+          setBoardroomDialogues(prev => [...prev, dialogue]);
+        },
+        onTerminalLog: (logText) => {
+          setTerminalLogs(prev => [...prev, logText]);
+        },
+        onRequireToolApproval: ({ stepIdx, agentId, agentName, toolName, toolArgs, approve, reject }) => {
+          if (autoApprove) {
+            approve(toolArgs);
+            return;
+          }
+          setPendingApproval({
+            stepIdx,
+            agentId,
+            agentName,
+            toolName,
+            toolArgs,
+            resolve: approve,
+            reject: reject
+          });
         }
       });
     } catch (err) {
@@ -406,6 +645,20 @@ Agent:`;
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* Auto-Approve Tools Switch */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.03)', padding: '5px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <input
+                id="auto-approve-toggle"
+                type="checkbox"
+                checked={autoApprove}
+                onChange={(e) => setAutoApprove(e.target.checked)}
+                style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+              />
+              <label htmlFor="auto-approve-toggle" style={{ fontSize: '0.78rem', color: autoApprove ? 'var(--success)' : '#fb923c', fontWeight: '700', cursor: 'pointer' }}>
+                {autoApprove ? '🛡️ Auto-Approve ON' : '🛡️ HITL Approval ON'}
+              </label>
+            </div>
+
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label style={{ fontSize: '0.8rem', color: 'var(--text-dark)', fontWeight: '600' }}>Overall Model:</label>
               <select
@@ -447,6 +700,7 @@ Agent:`;
               ceoStep={ceoStep}
               finalResponse={finalResponse}
               error={error}
+              boardroomDialogues={boardroomDialogues}
             />
           )}
 
@@ -538,6 +792,333 @@ Agent:`;
 
         </section>
       </main>
+
+      {/* Live Command Terminal Drawer Toggle Button */}
+      <button
+        onClick={() => setShowTerminal(prev => !prev)}
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          right: '20px',
+          zIndex: 90,
+          background: 'rgba(15, 23, 42, 0.9)',
+          border: '1px solid var(--border)',
+          borderRadius: '50%',
+          width: '46px',
+          height: '46px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--accent)',
+          cursor: 'pointer',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+          fontSize: '1.2rem'
+        }}
+        title="Toggle Live Shell Logs"
+      >
+        📟
+      </button>
+
+      {/* Live Command Terminal Drawer */}
+      {showTerminal && (
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: '260px',
+          right: 0,
+          height: '240px',
+          background: '#0a0f1d',
+          borderTop: '1px solid var(--border)',
+          zIndex: 80,
+          boxShadow: '0 -8px 24px rgba(0,0,0,0.4)',
+          display: 'flex',
+          flexDirection: 'column',
+          fontFamily: 'JetBrains Mono, monospace'
+        }}>
+          <div style={{
+            background: '#0f172a',
+            padding: '8px 16px',
+            borderBottom: '1px solid rgba(255,255,255,0.05)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: '750', color: 'var(--accent)', letterSpacing: '0.5px' }}>
+              📟 SWARM LIVE SHELL CONSOLE ({terminalLogs.length} logs)
+            </span>
+            <button 
+              onClick={() => setTerminalLogs([])}
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '2px 8px',
+                color: 'var(--text-dark)',
+                fontSize: '0.65rem',
+                cursor: 'pointer'
+              }}
+            >
+              Clear Logs
+            </button>
+          </div>
+          <div style={{
+            flex: 1,
+            padding: '16px',
+            overflowY: 'auto',
+            fontSize: '0.75rem',
+            color: '#38bdf8',
+            lineHeight: '1.5',
+            whiteSpace: 'pre-wrap'
+          }}>
+            {terminalLogs.length === 0 ? (
+              <span style={{ color: 'var(--text-dark)' }}>Waiting for local python/shell commands...</span>
+            ) : (
+              terminalLogs.join('\n')
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* HITL Tool Approval Modal */}
+      {pendingApproval && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(10, 15, 30, 0.75)',
+          backdropFilter: 'blur(8px)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px'
+        }}>
+          <div className="glass-panel" style={{
+            width: '100%',
+            maxWidth: '640px',
+            padding: '28px',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(15, 23, 42, 0.95)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '18px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.6rem' }}>🛡️</span>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: '750', color: '#fb923c' }}>
+                  Swarm Guard: Tool Execution Intercepted
+                </h3>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-dark)' }}>
+                  {pendingApproval.agentName} ({pendingApproval.agentId}) is requesting to execute a tool.
+                </p>
+              </div>
+            </div>
+
+            <div style={{
+              background: 'rgba(0,0,0,0.3)',
+              border: '1px solid var(--border)',
+              borderRadius: '6px',
+              padding: '12px 16px',
+              fontSize: '0.8rem',
+              color: 'var(--text-muted)'
+            }}>
+              <strong>Tool:</strong> <code style={{ color: 'var(--accent)', fontFamily: 'JetBrains Mono, monospace' }}>{pendingApproval.toolName}</code>
+            </div>
+
+            {/* Editable Arguments */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: '650', color: 'var(--text-muted)' }}>
+                Tool Arguments (Editable):
+              </label>
+              
+              {pendingApproval.toolName === 'run_command' && (
+                <input
+                  type="text"
+                  value={pendingApproval.toolArgs.command}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPendingApproval(prev => ({
+                      ...prev,
+                      toolArgs: { ...prev.toolArgs, command: val }
+                    }));
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    color: 'white',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.82rem'
+                  }}
+                />
+              )}
+
+              {pendingApproval.toolName === 'write_file' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={pendingApproval.toolArgs.path}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPendingApproval(prev => ({
+                        ...prev,
+                        toolArgs: { ...prev.toolArgs, path: val }
+                      }));
+                    }}
+                    placeholder="File Path"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      color: 'white',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontSize: '0.82rem'
+                    }}
+                  />
+                  <textarea
+                    rows={8}
+                    value={pendingApproval.toolArgs.content}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPendingApproval(prev => ({
+                        ...prev,
+                        toolArgs: { ...prev.toolArgs, content: val }
+                      }));
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '6px',
+                      color: 'white',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontSize: '0.82rem',
+                      resize: 'vertical'
+                    }}
+                  />
+                </div>
+              )}
+
+              {pendingApproval.toolName === 'web_search' && (
+                <input
+                  type="text"
+                  value={pendingApproval.toolArgs.query}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPendingApproval(prev => ({
+                      ...prev,
+                      toolArgs: { ...prev.toolArgs, query: val }
+                    }));
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    color: 'white',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.82rem'
+                  }}
+                />
+              )}
+
+              {pendingApproval.toolName === 'fetch_url' && (
+                <input
+                  type="text"
+                  value={pendingApproval.toolArgs.url}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPendingApproval(prev => ({
+                      ...prev,
+                      toolArgs: { ...prev.toolArgs, url: val }
+                    }));
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    color: 'white',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.82rem'
+                  }}
+                />
+              )}
+
+              {pendingApproval.toolName === 'read_file' && (
+                <input
+                  type="text"
+                  value={pendingApproval.toolArgs.path}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPendingApproval(prev => ({
+                      ...prev,
+                      toolArgs: { ...prev.toolArgs, path: val }
+                    }));
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    color: 'white',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.82rem'
+                  }}
+                />
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+              <button
+                className="btn"
+                style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  color: '#ef4444',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  padding: '8px 18px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '600'
+                }}
+                onClick={() => {
+                  const rejectFn = pendingApproval.reject;
+                  setPendingApproval(null);
+                  rejectFn(new Error('User rejected tool execution.'));
+                }}
+              >
+                Reject & Block
+              </button>
+              <button
+                className="btn btn-primary"
+                style={{
+                  padding: '8px 24px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '600'
+                }}
+                onClick={() => {
+                  const resolveFn = pendingApproval.resolve;
+                  const args = pendingApproval.toolArgs;
+                  setPendingApproval(null);
+                  resolveFn(args);
+                }}
+              >
+                Approve & Run
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

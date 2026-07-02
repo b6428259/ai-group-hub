@@ -305,6 +305,55 @@ app.post('/api/tools/run-command', (req, res) => {
   });
 });
 
+// Memory Store endpoints
+const memoryFilePath = pathModule.resolve('sandbox/memory_store.json');
+
+app.get('/api/memory', (req, res) => {
+  try {
+    if (!fs.existsSync('sandbox')) {
+      fs.mkdirSync('sandbox');
+    }
+    if (!fs.existsSync(memoryFilePath)) {
+      fs.writeFileSync(memoryFilePath, '[]', 'utf8');
+    }
+    const data = fs.readFileSync(memoryFilePath, 'utf8');
+    res.json({ success: true, memory: JSON.parse(data) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/memory', (req, res) => {
+  const { goal, status, summary, timestamp } = req.body;
+  if (!goal) return res.status(400).json({ success: false, error: 'Missing goal' });
+  try {
+    if (!fs.existsSync('sandbox')) {
+      fs.mkdirSync('sandbox');
+    }
+    let memoryList = [];
+    if (fs.existsSync(memoryFilePath)) {
+      const data = fs.readFileSync(memoryFilePath, 'utf8');
+      memoryList = JSON.parse(data);
+    }
+    memoryList.push({
+      id: `run_${Date.now()}`,
+      goal,
+      status: status || 'completed',
+      summary: summary || '',
+      timestamp: timestamp || new Date().toISOString()
+    });
+    // Limit to last 20 entries
+    if (memoryList.length > 20) {
+      memoryList = memoryList.slice(-20);
+    }
+    fs.writeFileSync(memoryFilePath, JSON.stringify(memoryList, null, 2), 'utf8');
+    res.json({ success: true, memory: memoryList });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 app.listen(port, '0.0.0.0', () => {
   console.log(`==================================================`);
   console.log(`🚀 Standalone Backend API listening at: http://0.0.0.0:${port}`);

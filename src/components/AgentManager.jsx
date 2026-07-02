@@ -212,6 +212,54 @@ export default function AgentManager({ agents, onUpdateAgents, models }) {
             <div className="agent-model-tag" title={agent.model}>
               {agent.model ? agent.model.split('/').pop() : 'OpenClaw Default'}
             </div>
+
+            {/* Gamified stats */}
+            {agent.active && (
+              <div className="agent-stats-row" style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginTop: '8px',
+                paddingTop: '8px',
+                borderTop: '1px solid rgba(255, 255, 255, 0.04)',
+                fontSize: '0.65rem',
+                color: 'var(--text-dark)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ 
+                    background: 'rgba(99, 102, 241, 0.1)', 
+                    color: 'var(--accent)', 
+                    padding: '2px 4px', 
+                    borderRadius: '3px',
+                    fontWeight: '700'
+                  }}>
+                    LV {agent.level || 1}
+                  </span>
+                  <span>XP: {agent.xp || 0}/100</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span>⚡ {agent.energy !== undefined ? agent.energy : 100}%</span>
+                    <div style={{ width: '40px', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${agent.energy !== undefined ? agent.energy : 100}%`,
+                        height: '100%',
+                        background: (agent.energy !== undefined ? agent.energy : 100) > 40 ? 'var(--success)' : '#ef4444',
+                        borderRadius: '2px',
+                        transition: 'width 0.3s'
+                      }} />
+                    </div>
+                  </div>
+                  <span title={`Mood: ${agent.mood || 'idle'}`} style={{ fontSize: '0.8rem' }}>
+                    {agent.mood === 'working' ? '💼' :
+                     agent.mood === 'proud' ? '😎' :
+                     agent.mood === 'stressed' ? '😰' :
+                     agent.mood === 'frustrated' ? '😡' :
+                     agent.mood === 'tired' ? '😴' : '💤'}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>

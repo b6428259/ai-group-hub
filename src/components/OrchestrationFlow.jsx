@@ -162,7 +162,8 @@ export default function OrchestrationFlow({
   steps, 
   ceoStep, 
   finalResponse,
-  error
+  error,
+  boardroomDialogues
 }) {
   const [taskInput, setTaskInput] = useState('');
   const [expandedSteps, setExpandedSteps] = useState({});
@@ -275,9 +276,77 @@ export default function OrchestrationFlow({
         </div>
       )}
 
-      {/* Execution Board */}
-      {(ceoStep || steps.length > 0 || finalResponse) && (
-        <div className="glass-panel slide-in" style={{ padding: '24px' }}>
+      {(ceoStep || steps.length > 0 || finalResponse || (boardroomDialogues && boardroomDialogues.length > 0)) && (
+        <div className="glass-panel slide-in" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          
+          {/* Boardroom Discussion Panel */}
+          {boardroomDialogues && boardroomDialogues.length > 0 && (
+            <div className="glass-panel fade-in" style={{
+              padding: '20px 24px',
+              background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.45) 0%, rgba(15, 23, 42, 0.75) 100%)',
+              border: '1px solid rgba(99, 102, 241, 0.15)',
+              boxShadow: 'inset 0 0 30px rgba(99,102,241,0.05)',
+              borderRadius: 'var(--radius-md)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                <span style={{ fontSize: '1.2rem' }}>🤝</span>
+                <h4 style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  Swarm Corporate Boardroom Discussion
+                </h4>
+              </div>
+              
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                maxHeight: '260px',
+                overflowY: 'auto',
+                padding: '8px',
+                background: 'rgba(0,0,0,0.25)',
+                borderRadius: '8px',
+                border: '1px solid rgba(255,255,255,0.03)'
+              }}>
+                {boardroomDialogues.map((dialogue, idx) => {
+                  const roleEmojis = { CEO: '👑', CTO: '🧠', PM: '📋' };
+                  const emoji = roleEmojis[dialogue.role] || '👤';
+                  return (
+                    <div key={idx} style={{
+                      display: 'flex',
+                      gap: '10px',
+                      alignItems: 'flex-start',
+                      padding: '8px 12px',
+                      background: 'rgba(255,255,255,0.01)',
+                      border: '1px solid rgba(255,255,255,0.03)',
+                      borderRadius: '6px'
+                    }}>
+                      <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '50%',
+                        background: 'linear-gradient(135deg, var(--primary), var(--accent))',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.9rem',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                        flexShrink: 0
+                      }}>
+                        {emoji}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                        <span style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--text-light)' }}>
+                          {dialogue.agentName} ({dialogue.role})
+                        </span>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0, lineHeight: '1.4' }}>
+                          {dialogue.text}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           
           {/* Progress Status Dashboard */}
           {isRunning && (
